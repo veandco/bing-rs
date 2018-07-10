@@ -1,0 +1,7 @@
+target
+
+# Vim
+*.sw?
+
+# Temporary files
+*~
