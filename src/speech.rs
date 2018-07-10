@@ -144,6 +144,15 @@ pub enum Format {
 }
 
 impl Speech {
+    /// Creates a new Bing Speech handle
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use bing_rs::speech::*;
+    ///
+    /// let speech = Speech::new("your_subscription_key").unwrap();
+    /// ```
     pub fn new<T>(subscription_key: T) -> Result<Self> where T: ToString {
         let core = Core::new()?;
         let handle = core.handle();
@@ -160,18 +169,32 @@ impl Speech {
         })
     }
 
+    /// Sets Bing Speech subscription key
     pub fn set_subscription_key(&mut self, key: &str) {
         self.subscription_key = String::from(key);
     }
 
+    /// Sets Bing Speech token URI
     pub fn set_token_uri(&mut self, uri: &str) {
         self.token_uri = String::from(uri);
     }
 
+    /// Sets Bing Speech recognition URI
     pub fn set_recognize_uri(&mut self, uri: &str) {
         self.recognize_uri = String::from(uri);
     }
 
+    /// Fetch new Bing Speech token
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use bing_rs::speech::*;
+    ///
+    /// let speech = Speech::new("your_subscription_key").unwrap();
+    ///
+    /// speech.fetch_token().unwrap();
+    /// ```
     pub fn fetch_token(&mut self) -> Result<(Headers, StatusCode, Option<String>)> {
         let uri: Uri = self.token_uri.parse()?;
         let mut request = Request::new(Method::Post, uri);
@@ -216,6 +239,47 @@ impl Speech {
         result
     }
 
+    /// Recognize text from provided audio data
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use bing_rs::speech::*;
+    ///
+    /// let speech = Speech::new("your_subscription_key").unwrap();
+    ///
+    /// speech.fetch_token().unwrap();
+    ///
+    /// let mut file = File::open("assets/audio.raw").unwrap();
+    /// let mut audio = Vec::new();
+    ///
+    /// match client.recognize(audio, Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), Format::Detailed) {
+    ///     Ok((_, _, Some(ref response))) => {
+    ///         match response {
+    ///             Response::Detailed(response) => {
+    ///                 println!("RecognitionStatus: {}", response.recognition_status);
+    ///                 println!("Offset: {}", response.offset);
+    ///                 println!("Duration: {}", response.duration);
+    ///                 println!("NBest");
+    ///                 println!("========");
+    ///
+    ///                 for (i, ref result) in response.nbest.iter().enumerate() {
+    ///                     println!("#{}", i);
+    ///                     println!("--------");
+    ///                     println!("    Confidence: {}", result.confidence);
+    ///                     println!("    Lexical: {}", result.lexical);
+    ///                     println!("    ITN: {}", result.itn);
+    ///                     println!("    MaskedITN: {}", result.masked_itn);
+    ///                     println!("    Display: {}", result.display);
+    ///                 }
+    ///             },
+    ///             _ => println!("Not handling simple response"),
+    ///         }
+    ///     },
+    ///     Ok((_, _, None)) => println!("Ok but no result"),
+    ///     Err(err) => println!("Error: {}", err),
+    /// }
+    /// ```
     pub fn recognize(self, audio: Vec<u8>, mode: Mode, format: Format) -> Result<(Headers, StatusCode, Option<Response>)> {
         let mut uri = self.recognize_uri.clone();
         let mut core_ref = self.core.try_borrow_mut()?;
