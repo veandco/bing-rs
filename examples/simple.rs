@@ -1,6 +1,6 @@
 extern crate bing_rs;
 
-use bing_rs::speech::Speech;
+use bing_rs::speech::*;
 use std::fs::File;
 use std::io::Read;
 
@@ -12,21 +12,20 @@ fn main() {
     let mut file = File::open("assets/audio.raw").unwrap();
     let mut audio = Vec::new();
     assert!(file.read_to_end(&mut audio).is_ok());
-    if let Ok((_, _, Some(ref response))) = client.recognize(audio) {
-        println!("RecognitionStatus: {}", response.recognition_status);
-        println!("Offset: {}", response.offset);
-        println!("Duration: {}", response.duration);
-        println!("NBest");
-        println!("========");
 
-        for (i, ref result) in response.nbest.iter().enumerate() {
-            println!("#{}", i);
-            println!("--------");
-            println!("    Confidence: {}", result.confidence);
-            println!("    Lexical: {}", result.lexical);
-            println!("    ITN: {}", result.itn);
-            println!("    MaskedITN: {}", result.masked_itn);
-            println!("    Display: {}", result.display);
-        }
+    match client.recognize(audio, Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), Format::Simple) {
+        Ok((_, _, Some(ref response))) => {
+            match response {
+                Response::Simple(response) => {
+                    println!("RecognitionStatus: {}", response.recognition_status);
+                    println!("DisplayText: {}", response.display_text);
+                    println!("Offset: {}", response.offset);
+                    println!("Duration: {}", response.duration);
+                },
+                _ => println!("Not handling detailed response"),
+            }
+        },
+        Ok((_, _, None)) => println!("Ok but no result"),
+        Err(err) => println!("Error: {}", err),
     }
 }

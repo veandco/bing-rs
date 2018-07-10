@@ -38,7 +38,7 @@ pub struct Speech {
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Debug)]
-pub struct RecognitionResult {
+pub struct DetailedRecognitionResult {
     #[serde(rename = "Confidence")]
     pub confidence: f64,
     #[serde(rename = "Lexical")]
@@ -54,7 +54,7 @@ pub struct RecognitionResult {
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Debug)]
-pub struct RecognitionResponse {
+pub struct DetailedRecognitionResponse {
     #[serde(rename = "RecognitionStatus")]
     pub recognition_status: String,
     #[serde(rename = "Offset")]
@@ -62,7 +62,85 @@ pub struct RecognitionResponse {
     #[serde(rename = "Duration")]
     pub duration: f64,
     #[serde(rename = "NBest")]
-    pub nbest: Vec<RecognitionResult>,
+    pub nbest: Vec<DetailedRecognitionResult>,
+}
+
+#[no_mangle]
+#[repr(C)]
+#[derive(Deserialize, Debug)]
+pub struct SimpleRecognitionResponse {
+    #[serde(rename = "RecognitionStatus")]
+    pub recognition_status: String,
+    #[serde(rename = "DisplayText")]
+    pub display_text: String,
+    #[serde(rename = "Offset")]
+    pub offset: f64,
+    #[serde(rename = "Duration")]
+    pub duration: f64,
+}
+
+#[no_mangle]
+#[repr(C)]
+#[derive(Deserialize, Debug)]
+pub enum Response {
+    Simple(SimpleRecognitionResponse),
+    Detailed(DetailedRecognitionResponse),
+}
+
+pub enum InteractiveDictationLanguage {
+    ArabicEgypt,
+    CatalanSpain,
+    DanishDenmark,
+    GermanGermany,
+    EnglishAustralia,
+    EnglishCanada,
+    EnglishUnitedKingdom,
+    EnglishIndia,
+    EnglishNewZealand,
+    EnglishUnitedStates,
+    SpanishSpain,
+    SpanishMexico,
+    FinnishFinland,
+    FrenchCanada,
+    FrenchFrance,
+    HindiIndia,
+    ItalianItaly,
+    JapaneseJapan,
+    KoreanKorea,
+    NorwegianNorway,
+    DutchNetherlands,
+    PolishPoland,
+    PortugueseBrazil,
+    PortuguesePortugal,
+    RussianRussia,
+    SwedishSweden,
+    ChineseChina,
+    ChineseHongKong,
+    ChineseTaiwan,
+}
+
+pub enum ConversationLanguage {
+    ArabicEgypt,
+    GermanGermany,
+    EnglishUnitedStates,
+    SpanishSpain,
+    FrenchFrance,
+    ItalianItaly,
+    JapaneseJapan,
+    PortugueseBrazil,
+    RussianRussia,
+    ChineseChina,
+}
+
+pub enum Mode {
+    Interactive(InteractiveDictationLanguage),
+    Conversation(ConversationLanguage),
+    Dictation(InteractiveDictationLanguage),
+}
+
+pub enum Format {
+    Simple,
+    Detailed,
 }
 
 impl Speech {
@@ -78,7 +156,7 @@ impl Speech {
             subscription_key: subscription_key.to_string(),
             token: String::new(),
             token_uri: String::from("https://api.cognitive.microsoft.com/sts/v1.0/issueToken"),
-            recognize_uri: String::from("https://speech.platform.bing.com/speech/recognition/interactive/cognitiveservices/v1?language=en-us&format=detailed")
+            recognize_uri: String::from("https://speech.platform.bing.com/speech/recognition")
         })
     }
 
@@ -138,12 +216,35 @@ impl Speech {
         result
     }
 
-    pub fn recognize(self, audio: Vec<u8>) -> Result<(Headers, StatusCode, Option<RecognitionResponse>)> {
-        let uri: Uri = self.recognize_uri.parse()?;
-        let mut request = Request::new(Method::Post, uri);
+    pub fn recognize(self, audio: Vec<u8>, mode: Mode, format: Format) -> Result<(Headers, StatusCode, Option<Response>)> {
+        let mut uri = self.recognize_uri.clone();
         let mut core_ref = self.core.try_borrow_mut()?;
         let client = self.client;
 
+        // Mode
+        match mode {
+            Mode::Interactive(_) | Mode::Dictation(_) => uri += "/interactive",
+            Mode::Conversation(_) => uri += "/conversation",
+        }
+
+        // Language
+        let language = match mode {
+            Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
+            Mode::Conversation(language) => language.to_string(),
+        };
+        uri += "/cognitiveservices/v1?language=";
+        uri += &language;
+
+        // Format
+        uri += "&format=";
+        uri += match format {
+            Format::Detailed => "detailed",
+            Format::Simple => "simple",
+        };
+
+        // Build Request
+        let uri: Uri = uri.parse()?;
+        let mut request = Request::new(Method::Post, uri);
         request.set_body(audio);
         {
             let headers_ref = request.headers_mut();
@@ -151,6 +252,7 @@ impl Speech {
             headers_ref.set_raw("Content-Type", "audio/wav; codec=audio/pcm; samplerate=16000");
         }
 
+        // Send Request
         let work = client
             .request(request)
             .and_then(|res| {
@@ -163,14 +265,71 @@ impl Speech {
                     if chunks.is_empty() {
                         Ok((header, status, None))
                     } else {
+                        let response = match format {
+                            Format::Detailed => Response::Detailed(serde_json::from_slice(&chunks)?),
+                            Format::Simple => Response::Simple(serde_json::from_slice(&chunks)?),
+                        };
                         Ok((
                             header,
                             status,
-                            Some(serde_json::from_slice(&chunks)?)
+                            Some(response)
                         ))
                     }
                 })
             });
         core_ref.run(work)?
+    }
+}
+
+impl ToString for InteractiveDictationLanguage {
+    fn to_string(&self) -> String {
+        match self {
+            InteractiveDictationLanguage::ArabicEgypt => "ar-EG",
+            InteractiveDictationLanguage::CatalanSpain => "ca-ES",
+            InteractiveDictationLanguage::DanishDenmark => "da-DK",
+            InteractiveDictationLanguage::GermanGermany => "de-DE",
+            InteractiveDictationLanguage::EnglishAustralia => "en-AU",
+            InteractiveDictationLanguage::EnglishCanada => "en-CA",
+            InteractiveDictationLanguage::EnglishUnitedKingdom => "en-GB",
+            InteractiveDictationLanguage::EnglishIndia => "en-IN",
+            InteractiveDictationLanguage::EnglishNewZealand => "en-NZ",
+            InteractiveDictationLanguage::EnglishUnitedStates => "en-US",
+            InteractiveDictationLanguage::SpanishSpain => "es-ES",
+            InteractiveDictationLanguage::SpanishMexico => "es-MX",
+            InteractiveDictationLanguage::FinnishFinland => "fi-FI",
+            InteractiveDictationLanguage::FrenchCanada => "fr-CA",
+            InteractiveDictationLanguage::FrenchFrance => "fr-FR",
+            InteractiveDictationLanguage::HindiIndia => "hi-IN",
+            InteractiveDictationLanguage::ItalianItaly => "it-IT",
+            InteractiveDictationLanguage::JapaneseJapan => "ja-JP",
+            InteractiveDictationLanguage::KoreanKorea => "ko-KR",
+            InteractiveDictationLanguage::NorwegianNorway => "nb-NO",
+            InteractiveDictationLanguage::DutchNetherlands => "nl-NL",
+            InteractiveDictationLanguage::PolishPoland => "pl-PL",
+            InteractiveDictationLanguage::PortugueseBrazil => "pt-BR",
+            InteractiveDictationLanguage::PortuguesePortugal => "pt-PT",
+            InteractiveDictationLanguage::RussianRussia => "ru-RU",
+            InteractiveDictationLanguage::SwedishSweden => "sv-SE",
+            InteractiveDictationLanguage::ChineseChina => "zh-CN",
+            InteractiveDictationLanguage::ChineseHongKong => "zh-HK",
+            InteractiveDictationLanguage::ChineseTaiwan => "zh-TW",
+        }.to_string()
+    }
+}
+
+impl ToString for ConversationLanguage {
+    fn to_string(&self) -> String {
+        match self {
+            ConversationLanguage::ArabicEgypt => "ar-EG",
+            ConversationLanguage::GermanGermany => "de-DE",
+            ConversationLanguage::EnglishUnitedStates => "en-US",
+            ConversationLanguage::SpanishSpain => "es-ES",
+            ConversationLanguage::FrenchFrance => "fr-FR",
+            ConversationLanguage::ItalianItaly => "it-IT",
+            ConversationLanguage::JapaneseJapan => "ja-JP",
+            ConversationLanguage::PortugueseBrazil => "pt-BR",
+            ConversationLanguage::RussianRussia => "ru-RU",
+            ConversationLanguage::ChineseChina => "zh-CN",
+        }.to_string()
     }
 }
