@@ -1,13 +1,13 @@
 //! # Bing for Rust
-//! 
+//!
 //! `bing-rs` is a library for using Bing API via Rust.
 
 #[macro_use]
 extern crate error_chain;
 
 // Tokio/Futures Crates
-extern crate tokio_core;
 extern crate futures;
+extern crate tokio_core;
 
 // Hyper Crates
 extern crate hyper;

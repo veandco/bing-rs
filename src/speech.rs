@@ -4,10 +4,10 @@ use futures::{Future, Stream};
 use tokio_core::reactor::Core;
 
 // Hyper Imports
-use hyper::{ self, Headers, Uri, Method };
 use hyper::client::{Client, Request};
 use hyper::header::{Authorization, Bearer};
 use hyper::StatusCode;
+use hyper::{self, Headers, Method, Uri};
 #[cfg(feature = "rustls")]
 use hyper_rustls::HttpsConnector;
 #[cfg(feature = "rust-native-tls")]
@@ -21,8 +21,8 @@ use serde_json;
 // Internal Library Imports
 use error::*;
 
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 #[no_mangle]
 #[repr(C)]
@@ -153,7 +153,10 @@ impl Speech {
     ///
     /// let speech = Speech::new("your_subscription_key").unwrap();
     /// ```
-    pub fn new<T>(subscription_key: T) -> Result<Self> where T: ToString {
+    pub fn new<T>(subscription_key: T) -> Result<Self>
+    where
+        T: ToString,
+    {
         let core = Core::new()?;
         let handle = core.handle();
         let client = Client::configure()
@@ -165,7 +168,7 @@ impl Speech {
             subscription_key: subscription_key.to_string(),
             token: String::new(),
             token_uri: String::from("https://api.cognitive.microsoft.com/sts/v1.0/issueToken"),
-            recognize_uri: String::from("https://speech.platform.bing.com/speech/recognition")
+            recognize_uri: String::from("https://speech.platform.bing.com/speech/recognition"),
         })
     }
 
@@ -207,27 +210,23 @@ impl Speech {
             headers_ref.set_raw("Ocp-Apim-Subscription-Key", self.subscription_key.clone());
         }
 
-        let work = client
-            .request(request)
-            .and_then(|res| {
-                let header = res.headers().clone();
-                let status = res.status();
-                res.body().fold(Vec::new(), |mut v, chunk| {
+        let work = client.request(request).and_then(|res| {
+            let header = res.headers().clone();
+            let status = res.status();
+            res.body()
+                .fold(Vec::new(), |mut v, chunk| {
                     v.extend(&chunk[..]);
                     ok::<_, hyper::Error>(v)
-                }).map(move |chunks| {
+                })
+                .map(move |chunks| {
                     if chunks.is_empty() {
                         Ok((header, status, None))
                     } else {
                         let token = String::from_utf8(chunks)?;
-                        Ok((
-                            header,
-                            status,
-                            Some(token)
-                        ))
+                        Ok((header, status, Some(token)))
                     }
                 })
-            });
+        });
 
         let result = core_ref.run(work)?;
         if let Ok(ref tuple) = result {
@@ -253,34 +252,41 @@ impl Speech {
     /// let mut file = File::open("assets/audio.raw").unwrap();
     /// let mut audio = Vec::new();
     ///
-    /// match client.recognize(audio, Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), Format::Detailed) {
-    ///     Ok((_, _, Some(ref response))) => {
-    ///         match response {
-    ///             Response::Detailed(response) => {
-    ///                 println!("RecognitionStatus: {}", response.recognition_status);
-    ///                 println!("Offset: {}", response.offset);
-    ///                 println!("Duration: {}", response.duration);
-    ///                 println!("NBest");
-    ///                 println!("========");
+    /// match client.recognize(
+    ///     audio,
+    ///     Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates),
+    ///     Format::Detailed,
+    /// ) {
+    ///     Ok((_, _, Some(ref response))) => match response {
+    ///         Response::Detailed(response) => {
+    ///             println!("RecognitionStatus: {}", response.recognition_status);
+    ///             println!("Offset: {}", response.offset);
+    ///             println!("Duration: {}", response.duration);
+    ///             println!("NBest");
+    ///             println!("========");
     ///
-    ///                 for (i, ref result) in response.nbest.iter().enumerate() {
-    ///                     println!("#{}", i);
-    ///                     println!("--------");
-    ///                     println!("    Confidence: {}", result.confidence);
-    ///                     println!("    Lexical: {}", result.lexical);
-    ///                     println!("    ITN: {}", result.itn);
-    ///                     println!("    MaskedITN: {}", result.masked_itn);
-    ///                     println!("    Display: {}", result.display);
-    ///                 }
-    ///             },
-    ///             _ => println!("Not handling simple response"),
+    ///             for (i, ref result) in response.nbest.iter().enumerate() {
+    ///                 println!("#{}", i);
+    ///                 println!("--------");
+    ///                 println!("    Confidence: {}", result.confidence);
+    ///                 println!("    Lexical: {}", result.lexical);
+    ///                 println!("    ITN: {}", result.itn);
+    ///                 println!("    MaskedITN: {}", result.masked_itn);
+    ///                 println!("    Display: {}", result.display);
+    ///             }
     ///         }
+    ///         _ => println!("Not handling simple response"),
     ///     },
     ///     Ok((_, _, None)) => println!("Ok but no result"),
     ///     Err(err) => println!("Error: {}", err),
     /// }
     /// ```
-    pub fn recognize(self, audio: Vec<u8>, mode: Mode, format: Format) -> Result<(Headers, StatusCode, Option<Response>)> {
+    pub fn recognize(
+        self,
+        audio: Vec<u8>,
+        mode: Mode,
+        format: Format,
+    ) -> Result<(Headers, StatusCode, Option<Response>)> {
         let mut uri = self.recognize_uri.clone();
         let mut core_ref = self.core.try_borrow_mut()?;
         let client = self.client;
@@ -312,35 +318,36 @@ impl Speech {
         request.set_body(audio);
         {
             let headers_ref = request.headers_mut();
-            headers_ref.set(Authorization(Bearer{ token: self.token }));
-            headers_ref.set_raw("Content-Type", "audio/wav; codec=audio/pcm; samplerate=16000");
+            headers_ref.set(Authorization(Bearer { token: self.token }));
+            headers_ref.set_raw(
+                "Content-Type",
+                "audio/wav; codec=audio/pcm; samplerate=16000",
+            );
         }
 
         // Send Request
-        let work = client
-            .request(request)
-            .and_then(|res| {
-                let header = res.headers().clone();
-                let status = res.status();
-                res.body().fold(Vec::new(), |mut v, chunk| {
+        let work = client.request(request).and_then(|res| {
+            let header = res.headers().clone();
+            let status = res.status();
+            res.body()
+                .fold(Vec::new(), |mut v, chunk| {
                     v.extend(&chunk[..]);
                     ok::<_, hyper::Error>(v)
-                }).map(move |chunks| {
+                })
+                .map(move |chunks| {
                     if chunks.is_empty() {
                         Ok((header, status, None))
                     } else {
                         let response = match format {
-                            Format::Detailed => Response::Detailed(serde_json::from_slice(&chunks)?),
+                            Format::Detailed => {
+                                Response::Detailed(serde_json::from_slice(&chunks)?)
+                            }
                             Format::Simple => Response::Simple(serde_json::from_slice(&chunks)?),
                         };
-                        Ok((
-                            header,
-                            status,
-                            Some(response)
-                        ))
+                        Ok((header, status, Some(response)))
                     }
                 })
-            });
+        });
         core_ref.run(work)?
     }
 }
