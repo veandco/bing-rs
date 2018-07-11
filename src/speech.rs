@@ -252,6 +252,7 @@ impl Speech {
     ///
     /// let mut file = File::open("assets/audio.raw").unwrap();
     /// let mut audio = Vec::new();
+    /// file.read_to_end(&mut audio).unwrap();
     ///
     /// match client.recognize(
     ///     audio,
