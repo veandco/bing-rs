@@ -22,6 +22,7 @@ use serde_json;
 use error::*;
 
 use std::cell::RefCell;
+use std::fmt::{self, Display};
 use std::rc::Rc;
 
 #[no_mangle]
@@ -287,30 +288,18 @@ impl Speech {
         mode: Mode,
         format: Format,
     ) -> Result<(Headers, StatusCode, Option<Response>)> {
-        let mut uri = self.recognize_uri.clone();
-        let mut core_ref = self.core.try_borrow_mut()?;
-        let client = self.client;
-
-        // Mode
-        match mode {
-            Mode::Interactive(_) | Mode::Dictation(_) => uri += "/interactive",
-            Mode::Conversation(_) => uri += "/conversation",
-        }
-
-        // Language
-        let language = match mode {
+        let language = match &mode {
             Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
             Mode::Conversation(language) => language.to_string(),
         };
-        uri += "/cognitiveservices/v1?language=";
-        uri += &language;
-
-        // Format
-        uri += "&format=";
-        uri += match format {
-            Format::Detailed => "detailed",
-            Format::Simple => "simple",
-        };
+        let uri = format!(
+            "https://speech.platform.bing.com/speech/recognition/{}/cognitiveservices/v1?language={}&format={}",
+            mode,
+            language,
+            format
+        );
+        let mut core_ref = self.core.try_borrow_mut()?;
+        let client = self.client;
 
         // Build Request
         let uri: Uri = uri.parse()?;
@@ -349,6 +338,25 @@ impl Speech {
                 })
         });
         core_ref.run(work)?
+    }
+}
+
+impl Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Mode::Interactive(_) => write!(f, "interactive"),
+            Mode::Conversation(_) => write!(f, "conversation"),
+            Mode::Dictation(_) => write!(f, "dictation"),
+        }
+    }
+}
+
+impl Display for Format {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Format::Detailed => write!(f, "detailed"),
+            Format::Simple => write!(f, "simple"),
+        }
     }
 }
 
