@@ -18,11 +18,30 @@ extern crate hyper_tls;
 #[cfg(feature = "native-tls")]
 extern crate native_tls;
 
+// WebSocket Crates
+extern crate ws;
+
 // Serde Crates
 extern crate serde;
 extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
+
+// Url
+extern crate url;
+
+// Log
+#[macro_use]
+extern crate log;
+
+// Chrono
+extern crate chrono;
+
+// UUID
+extern crate uuid;
+
+// C
+extern crate libc;
 
 pub mod error;
 pub mod speech;

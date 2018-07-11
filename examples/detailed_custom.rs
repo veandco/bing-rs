@@ -5,9 +5,12 @@ use std::fs::File;
 use std::io::Read;
 
 const SUBSCRIPTION_KEY: &str = "SUBSCRIPTION_KEY";
+const ENDPOINT_ID: &str = "ENDPOINT_ID";
 
 fn main() {
     let mut client = Speech::new(&SUBSCRIPTION_KEY).unwrap();
+    client.set_custom_speech(true);
+    client.set_endpoint_id(&ENDPOINT_ID);
     assert!(client.fetch_token().is_ok());
     let mut file = File::open("assets/audio.raw").unwrap();
     let mut audio = Vec::new();
