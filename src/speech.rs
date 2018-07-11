@@ -289,8 +289,8 @@ impl Speech {
         format: Format,
     ) -> Result<(Headers, StatusCode, Option<Response>)> {
         let language = match &mode {
-            Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
-            Mode::Conversation(language) => language.to_string(),
+            Mode::Interactive(language) | Mode::Dictation(language) => format!("{}", language),
+            Mode::Conversation(language) => format!("{}", language),
         };
         let uri = format!(
             "https://speech.platform.bing.com/speech/recognition/{}/cognitiveservices/v1?language={}&format={}",
@@ -360,9 +360,9 @@ impl Display for Format {
     }
 }
 
-impl ToString for InteractiveDictationLanguage {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for InteractiveDictationLanguage {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
             InteractiveDictationLanguage::ArabicEgypt => "ar-EG",
             InteractiveDictationLanguage::CatalanSpain => "ca-ES",
             InteractiveDictationLanguage::DanishDenmark => "da-DK",
@@ -392,13 +392,14 @@ impl ToString for InteractiveDictationLanguage {
             InteractiveDictationLanguage::ChineseChina => "zh-CN",
             InteractiveDictationLanguage::ChineseHongKong => "zh-HK",
             InteractiveDictationLanguage::ChineseTaiwan => "zh-TW",
-        }.to_string()
+        };
+        write!(f, "{}", s)
     }
 }
 
-impl ToString for ConversationLanguage {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for ConversationLanguage {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
             ConversationLanguage::ArabicEgypt => "ar-EG",
             ConversationLanguage::GermanGermany => "de-DE",
             ConversationLanguage::EnglishUnitedStates => "en-US",
@@ -409,6 +410,7 @@ impl ToString for ConversationLanguage {
             ConversationLanguage::PortugueseBrazil => "pt-BR",
             ConversationLanguage::RussianRussia => "ru-RU",
             ConversationLanguage::ChineseChina => "zh-CN",
-        }.to_string()
+        };
+        write!(f, "{}", s)
     }
 }
