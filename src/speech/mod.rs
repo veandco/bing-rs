@@ -94,7 +94,7 @@ impl Speech {
         mode: &Mode,
         format: Format,
         handler: Arc<Mutex<Handler + Send + Sync>>,
-    ) -> Result<Arc<Mutex<Handle>>> {
+    ) -> Result<Handle> {
         let language = match &mode {
             Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
             Mode::Conversation(language) => language.to_string(),
@@ -214,12 +214,12 @@ impl Speech {
             _ => unimplemented!(),
         };
 
-        Ok(Arc::new(Mutex::new(Handle {
+        Ok(Handle {
             send_tx,
             ws_out,
             send_thread: Some(send_thread),
             recv_thread: Some(recv_thread),
-        })))
+        })
     }
 
     /// Fetch new Bing Speech token

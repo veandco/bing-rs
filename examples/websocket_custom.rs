@@ -79,9 +79,9 @@ fn main() {
 
     // Connect to Bing Speech via Websocket
     let mode = Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates);
-    let handle = client
+    let handle = Arc::new(Mutex::new(client
         .websocket(&mode, Format::Detailed, Arc::new(Mutex::new(MyHandler {})))
-        .unwrap();
+        .unwrap()));
 
     // Run continuous audio data transfer in another thread
     let handle_clone = handle.clone();

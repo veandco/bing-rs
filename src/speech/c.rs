@@ -19,7 +19,7 @@ pub struct BingSpeech {
 #[no_mangle]
 #[repr(C)]
 pub struct BingSpeechWebsocket {
-    handle: Arc<Mutex<Handle>>,
+    handle: Handle,
 }
 
 #[no_mangle]
@@ -279,17 +279,9 @@ pub unsafe extern "C" fn bing_speech_websocket_audio(
             i + BUFFER_SIZE
         };
 
-        // Get handle to Speech
-        let handle = match (*handle).handle.lock() {
-            Ok(handle) => handle,
-            Err(err) => {
-                error!(target: "bing_speech_websocket_audio()", "{}", err);
-                return 1;
-            }
-        };
-
         // Send audio data to Bing Speech
         let result = (*handle)
+            .handle
             .send_tx
             .send(ClientEvent::Audio(audio[i..j].to_vec()));
         if let Err(err) = result {
@@ -305,6 +297,5 @@ pub unsafe extern "C" fn bing_speech_websocket_audio(
 
 #[no_mangle]
 pub unsafe extern "C" fn bing_speech_websocket_close(handle: *mut BingSpeechWebsocket) {
-    let mut handle = (*handle).handle.lock().unwrap();
-    (*handle).close();
+    (*handle).handle.close();
 }
