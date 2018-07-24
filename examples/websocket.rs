@@ -63,6 +63,7 @@ fn main() {
     // Fetch token
     let mut client = Speech::new(&env::var("SUBSCRIPTION_KEY").unwrap()).unwrap();
     client.fetch_token().unwrap();
+    client.auto_fetch_token();
 
     // Load audio data
     let mut file = File::open("assets/audio.raw").unwrap();

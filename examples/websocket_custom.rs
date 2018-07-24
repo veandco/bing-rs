@@ -65,6 +65,7 @@ fn main() {
     client.set_custom_speech(true);
     client.set_endpoint_id(&env::var("ENDPOINT_ID").unwrap());
     client.fetch_token().unwrap();
+    client.auto_fetch_token();
 
     // Load audio data
     let mut file = File::open("assets/audio.raw").unwrap();
