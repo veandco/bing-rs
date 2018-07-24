@@ -32,6 +32,7 @@ use std::rc::Rc;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 #[no_mangle]
 #[repr(C)]
@@ -39,7 +40,7 @@ pub struct Speech {
     core: Rc<RefCell<Core>>,
     client: Rc<Client<HttpsConnector<HttpConnector>>>,
     subscription_key: String,
-    token: String,
+    token: Arc<Mutex<String>>,
     is_custom_speech: bool,
     endpoint_id: String,
 }
@@ -64,7 +65,7 @@ impl Speech {
             core: Rc::new(RefCell::new(core)),
             client: Rc::new(client),
             subscription_key: subscription_key.to_string(),
-            token: String::new(),
+            token: Arc::new(Mutex::new(String::new())),
             is_custom_speech: false,
             endpoint_id: String::new(),
         })
@@ -267,11 +268,54 @@ impl Speech {
         let result = core_ref.run(work)?;
         if let Ok(ref tuple) = result {
             if let Some(ref token) = tuple.2 {
-                self.token = token.clone();
+                *self.token.lock().unwrap() = token.clone();
             }
         }
 
         result
+    }
+
+    pub fn auto_fetch_token(&mut self) {
+        let token_1 = self.token.clone();
+        let subscription_key = self.subscription_key.clone();
+        let is_custom_speech = self.is_custom_speech;
+
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(9 * 60));
+
+                let token_2 = token_1.clone();
+                let uri: Uri = if is_custom_speech {
+                    "https://westus.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+                } else {
+                    "https://api.cognitive.microsoft.com/sts/v1.0/issueToken"
+                }.parse().unwrap();
+
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .uri(uri)
+                    .header("Ocp-Apim-Subscription-Key", subscription_key.as_str())
+                    .header("Content-Length", "0")
+                    .body(Body::empty())
+                    .unwrap();
+
+                let mut core = Core::new().unwrap();
+                let client = Client::builder().build(HttpsConnector::new(1));
+                let work = client.request(request).and_then(|res| {
+                    res.into_body()
+                        .concat2()
+                        .map(move |chunks| {
+                            if !chunks.is_empty() {
+                                let token = String::from_utf8(chunks.to_vec()).unwrap();
+                                if let Ok(mut t) = token_2.lock() {
+                                    *t = token;
+                                }
+                            }
+                        })
+                });
+                core.run(work).unwrap();
+            }
+        });
     }
 
     /// Recognize text from provided audio data
@@ -330,7 +374,7 @@ impl Speech {
         let request = Request::builder()
             .method(Method::POST)
             .uri(uri)
-            .header("Authorization", format!("Bearer {}", self.token.clone()).as_str())
+            .header("Authorization", format!("Bearer {}", self.token.lock().unwrap().clone()).as_str())
             .header("Content-Type", content_type)
             .body(Body::from(audio))
             .unwrap();

@@ -43,7 +43,7 @@ pub enum ServerEvent {
 /// Websocket instance that keeps the connection to the server alive
 pub struct Instance {
     pub ws_out: ws::Sender,
-    pub token: String,
+    pub token: Arc<Mutex<String>>,
     pub thread_out: Sender<ServerEvent>,
     pub format: Format,
 }
@@ -192,7 +192,7 @@ impl ws::Handler for Instance {
         let mut request = Request::from_url(url)?;
         {
             let headers = request.headers_mut();
-            let token = format!("Bearer {}", &self.token).as_bytes().to_vec();
+            let token = format!("Bearer {}", &self.token.lock().unwrap()).as_bytes().to_vec();
             let connection_id = Uuid::new_v4()
                 .to_string()
                 .replace("-", "")
