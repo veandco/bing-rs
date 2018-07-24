@@ -1,8 +1,8 @@
-// Tokio/Futures Imports
+// tokio / futures
 use futures::{Future, Stream};
 use tokio_core::reactor::Core;
 
-// Hyper Imports
+// hyper
 use hyper::client::{Client, HttpConnector};
 use hyper::StatusCode;
 use hyper::{Body, HeaderMap, Method, Request, Uri};
@@ -13,19 +13,19 @@ use hyper_tls;
 #[cfg(feature = "rust-native-tls")]
 type HttpsConnector = hyper_tls::HttpsConnector<hyper::client::HttpConnector>;
 
-// Serde Imports
+// serde_json
 use serde_json;
 
-// Websocket Imports
+// ws
 use ws;
 
-// Internal Library Imports
+// internal
 pub mod c;
 pub mod websocket;
 use self::websocket::*;
 use error::*;
 
-// Standard Library Imports
+// std
 use std::cell::RefCell;
 use std::fmt::{self, Display};
 use std::rc::Rc;
@@ -355,6 +355,7 @@ impl Speech {
     }
 }
 
+/// Struct for storing DetailedPhrase's recognized text information
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Debug, Clone)]
@@ -371,6 +372,7 @@ pub struct DetailedPhraseItem {
     pub display: String,
 }
 
+/// Recognition result when "detailed" format is used for speech recognition
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Debug, Clone)]
@@ -385,6 +387,7 @@ pub struct DetailedPhrase {
     pub nbest: Vec<DetailedPhraseItem>,
 }
 
+/// Recognition result when "simple" format is used for speech recognition
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Debug, Clone)]
@@ -399,6 +402,7 @@ pub struct SimplePhrase {
     pub duration: f64,
 }
 
+/// Silence recognition result when there's nothing detected
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Debug, Clone)]
@@ -411,6 +415,7 @@ pub struct SilencePhrase {
     pub duration: f64,
 }
 
+/// Partial speech recognition result when still in the middle of speech
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Debug, Clone)]
@@ -423,6 +428,7 @@ pub struct Hypothesis {
     pub duration: f64,
 }
 
+/// Enum for matching simple, detailed, and silence recognition result
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Debug, Clone)]
@@ -452,6 +458,7 @@ impl Phrase {
     }
 }
 
+/// Supported interactive and dictation languages by Bing
 pub enum InteractiveDictationLanguage {
     ArabicEgypt,
     CatalanSpain,
@@ -484,6 +491,7 @@ pub enum InteractiveDictationLanguage {
     ChineseTaiwan,
 }
 
+/// Supported conversation languages by Bing
 pub enum ConversationLanguage {
     ArabicEgypt,
     GermanGermany,
@@ -497,12 +505,14 @@ pub enum ConversationLanguage {
     ChineseChina,
 }
 
+/// Enum for matching mode and language
 pub enum Mode {
     Interactive(InteractiveDictationLanguage),
     Conversation(ConversationLanguage),
     Dictation(InteractiveDictationLanguage),
 }
 
+/// Enum for the different format of speech recognition result
 #[derive(Clone, PartialEq)]
 pub enum Format {
     Simple,
@@ -632,6 +642,7 @@ impl Display for Phrase {
     }
 }
 
+/// Auto-detected speech configuration payload
 fn default_speech_config() -> ConfigPayload {
     #[cfg(target_os = "windows")]
     let platform = "Windows";

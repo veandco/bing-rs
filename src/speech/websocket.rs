@@ -1,30 +1,33 @@
-// Standard Library Imports
+// std
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-// Serde JSON Imports
+// serde_json
 use serde_json;
 
-// Websocket Imports
+// ws
 use ws::{self, CloseCode, Error, ErrorKind, Handshake, Message, Request, Result};
 
-// Url Imports
+// url
 use url::Url;
 
-// UUID Imports
+// uuid
 use uuid::Uuid;
 
-// Chrono Imports
+// chrono
 use chrono::prelude::*;
 
+// internal
 use speech::{Format, Hypothesis, Phrase};
 
+// Enum of event that comes from client
 pub enum ClientEvent {
     Audio(Vec<u8>),
     Disconnect,
 }
 
+/// Enum of event that comes from server
 pub enum ServerEvent {
     Connect(ws::Sender),
     Disconnect,
@@ -37,6 +40,7 @@ pub enum ServerEvent {
     Unknown,
 }
 
+/// Websocket instance that keeps the connection to the server alive
 pub struct Instance {
     pub ws_out: ws::Sender,
     pub token: String,
@@ -44,6 +48,7 @@ pub struct Instance {
     pub format: Format,
 }
 
+/// Websocket handle for the client to use
 #[no_mangle]
 #[repr(C)]
 pub struct Handle {
@@ -67,6 +72,7 @@ impl Handle {
     }
 }
 
+/// Trait to be implemented by the client for handling Bing Speech recognition events
 pub trait Handler {
     fn on_turn_start(&mut self) {}
     fn on_turn_end(&mut self) {}
@@ -122,16 +128,20 @@ impl Instance {
     }
 }
 
+/// Utility struct for communicating with Bing Speech API via Websocket using their protocol
+/// Right now, it primarily serves to generate and keep track of audio UUID.
 #[derive(Default)]
 pub struct Protocol {
     audio_uuid: Option<String>,
 }
 
 impl Protocol {
+    /// Creates a new Protocol instance
     pub fn new() -> Protocol {
         Protocol { audio_uuid: None }
     }
 
+    /// Send speech configuration data to Bing Speech API via Websocket
     pub fn config(sender: &ws::Sender, cfg: &ConfigPayload) -> Result<()> {
         let now = Local::now().to_rfc3339();
         let config_text = serde_json::to_string(&cfg).unwrap();
@@ -147,6 +157,7 @@ impl Protocol {
         sender.send(msg)
     }
 
+    /// Send audio data to Bing Speech API via Websocket
     pub fn audio(&mut self, sender: &ws::Sender, audio: &[u8]) -> Result<()> {
         let uuid = if let Some(ref uuid) = self.audio_uuid {
             uuid.clone()
@@ -204,7 +215,6 @@ impl ws::Handler for Instance {
             })
     }
 
-    // Handle messages recieved in the websocket (in this case, only on /ws)
     fn on_message(&mut self, msg: Message) -> Result<()> {
         self.parse_server_message(msg)?;
         Ok(())
@@ -227,6 +237,7 @@ impl Handler for Protocol {
     }
 }
 
+/// Configuration struct for "speech.config" payload
 #[no_mangle]
 #[repr(C)]
 #[derive(Deserialize, Serialize, Debug)]
@@ -268,6 +279,7 @@ pub struct ConfigPayloadContextDevice {
     pub version: String,
 }
 
+/// Utility function for generating UUID without hyphens
 pub fn generate_uuid() -> String {
     Uuid::new_v4().to_string().replace("-", "")
 }
