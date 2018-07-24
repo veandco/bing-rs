@@ -1,16 +1,14 @@
 extern crate bing_rs;
 
 use bing_rs::speech::*;
+use std::env;
 use std::fs::File;
 use std::io::Read;
 
-const SUBSCRIPTION_KEY: &str = "SUBSCRIPTION_KEY";
-const ENDPOINT_ID: &str = "ENDPOINT_ID";
-
 fn main() {
-    let mut client = Speech::new(&SUBSCRIPTION_KEY).unwrap();
+    let mut client = Speech::new(&env::var("SUBSCRIPTION_KEY").unwrap()).unwrap();
     client.set_custom_speech(true);
-    client.set_endpoint_id(&ENDPOINT_ID);
+    client.set_endpoint_id(&env::var("ENDPOINT_ID").unwrap());
     assert!(client.fetch_token().is_ok());
     let mut file = File::open("assets/audio.raw").unwrap();
     let mut audio = Vec::new();

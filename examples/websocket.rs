@@ -7,6 +7,7 @@ extern crate env_logger;
 extern crate serde_json;
 extern crate ws;
 
+use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
@@ -16,8 +17,6 @@ use std::time::Duration;
 use bing_rs::speech::websocket::*;
 use bing_rs::speech::*;
 use chan_signal::Signal;
-
-const SUBSCRIPTION_KEY: &str = "SUBSCRIPTION_KEY";
 
 struct MyHandler;
 
@@ -62,7 +61,7 @@ fn main() {
     let (_sdone, rdone) = chan::sync::<()>(0);
 
     // Fetch token
-    let mut client = Speech::new(&SUBSCRIPTION_KEY).unwrap();
+    let mut client = Speech::new(&env::var("SUBSCRIPTION_KEY").unwrap()).unwrap();
     client.fetch_token().unwrap();
 
     // Load audio data
