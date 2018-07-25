@@ -11,7 +11,7 @@ use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -27,7 +27,6 @@ fn main() {
 
     // Setup OS signal handler
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-    let (_sdone, rdone) = chan::sync::<()>(0);
 
     // Fetch token
     let mut client = Speech::new(&env::var("SUBSCRIPTION_KEY").unwrap()).unwrap();
@@ -59,8 +58,6 @@ fn main() {
     }
 
     // Run continuous audio data transfer in another thread
-    let ws = Arc::new(Mutex::new(ws));
-    let ws_1 = ws.clone();
     let running_1 = running.clone();
     thread::spawn(move || {
         let mut i = 0;
@@ -69,9 +66,7 @@ fn main() {
             const BUFFER_SIZE: usize = 4096;
 
             // Send audio data to Bing
-            if let Ok(mut ws) = ws_1.lock() {
-                ws.audio(&audio[i..i + BUFFER_SIZE].to_vec()).unwrap();
-            }
+            ws.audio(&audio[i..i + BUFFER_SIZE].to_vec()).unwrap();
 
             // Go to the next audio data chunk
             i += BUFFER_SIZE;
@@ -80,8 +75,11 @@ fn main() {
             }
 
             // Wait for some time to simulate real microphone audio data period
-            thread::sleep(Duration::from_millis(256));
+            thread::sleep(Duration::from_millis(100));
         }
+
+        // Close the Websocket connection
+        ws.close();
     });
 
     let running_2 = running.clone();
@@ -122,12 +120,5 @@ fn main() {
             println!("Received signal: {:?}", signal);
             running.store(false, Ordering::Relaxed);
         },
-        rdone.recv() => {
-            println!("Program completed normally.");
-        },
     }
-
-    // Close the Websocket connection
-    let mut ws = ws.lock().unwrap();
-    (*ws).close();
 }
