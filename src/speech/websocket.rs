@@ -40,15 +40,13 @@ pub struct Websocket {
 
 impl Websocket {
     pub fn new(token: Arc<Mutex<String>>) -> Websocket {
-        let (tx, rx) = channel();
-
         Websocket {
             ws: None,
             ws_thread: None,
             sender: Arc::new(Mutex::new(None)),
             server_event_tx: Arc::new(Mutex::new(None)),
-            server_event_from_handler_tx: Some(tx),
-            server_event_from_handler_rx: Some(rx),
+            server_event_from_handler_tx: None,
+            server_event_from_handler_rx: None,
             server_event_from_handler_thread: None,
             server_event_from_handler_running: Arc::new(AtomicBool::new(true)),
             token,
@@ -64,6 +62,10 @@ impl Websocket {
         is_custom_speech: bool,
         endpoint_id: &str,
     ) {
+        let (tx, rx) = channel();
+        self.server_event_from_handler_tx = Some(tx);
+        self.server_event_from_handler_rx = Some(rx);
+
         if let Ok(sender_option) = self.sender.lock() {
             if let Some(_) = *sender_option {
                 return;
@@ -135,17 +137,18 @@ impl Websocket {
         if self.ws.is_some() {
             let running_1 = self.server_event_from_handler_running.clone();
             let audio_uuid_1 = self.audio_uuid.clone();
-            let rx = self.server_event_from_handler_rx.take().unwrap();
-            self.server_event_from_handler_thread = Some(thread::spawn(move || {
-                while running_1.load(Ordering::Relaxed) {
-                    match rx.recv() {
-                        Ok(ServerEvent::TurnEnd) => {
-                            *audio_uuid_1.lock().unwrap() = None;
+            if let Some(rx) = self.server_event_from_handler_rx.take() {
+                self.server_event_from_handler_thread = Some(thread::spawn(move || {
+                    while running_1.load(Ordering::Relaxed) {
+                        match rx.recv() {
+                            Ok(ServerEvent::TurnEnd) => {
+                                *audio_uuid_1.lock().unwrap() = None;
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
-                }
-            }));
+                }));
+            }
 
             let ws = self.ws.take().unwrap();
             self.ws_thread = Some(thread::spawn(move || match ws.run() {
