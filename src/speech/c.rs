@@ -6,8 +6,9 @@ use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use speech::{
-    ClientEvent, DetailedPhraseItem, Format, Handle, Handler, Hypothesis,
+    DetailedPhraseItem, Format, Hypothesis,
     InteractiveDictationLanguage, Mode, Phrase, Speech,
+    Websocket
 };
 
 #[no_mangle]
@@ -19,7 +20,7 @@ pub struct BingSpeech {
 #[no_mangle]
 #[repr(C)]
 pub struct BingSpeechWebsocket {
-    handle: Handle,
+    handle: Websocket,
 }
 
 #[no_mangle]
@@ -282,8 +283,7 @@ pub unsafe extern "C" fn bing_speech_websocket_audio(
         // Send audio data to Bing Speech
         let result = (*handle)
             .handle
-            .send_tx
-            .send(ClientEvent::Audio(audio[i..j].to_vec()));
+            .audio(&audio[i..j].to_vec());
         if let Err(err) = result {
             error!(target: "bing_speech_websocket_audio()", "{}", err);
             return 2;

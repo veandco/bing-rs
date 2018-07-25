@@ -1,33 +1,18 @@
-// std
-use std::sync::mpsc::Sender;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
+use url::Url;
+use uuid::Uuid;
+use ws;
 
-// serde_json
+use chrono::prelude::*;
 use serde_json;
 
-// ws
-use ws::{self, CloseCode, Error, ErrorKind, Handshake, Message, Request, Result};
-
-// url
-use url::Url;
-
-// uuid
-use uuid::Uuid;
-
-// chrono
-use chrono::prelude::*;
-
-// internal
-use speech::{Format, Hypothesis, Phrase};
-
-// Enum of event that comes from client
-pub enum ClientEvent {
-    Audio(Vec<u8>),
-    Disconnect,
-}
+use speech::*;
 
 /// Enum of event that comes from server
+#[derive(Clone)]
 pub enum ServerEvent {
     Connect(ws::Sender),
     Disconnect,
@@ -40,60 +25,238 @@ pub enum ServerEvent {
     Unknown,
 }
 
-/// Websocket instance that keeps the connection to the server alive
-pub struct Instance {
-    pub ws_out: ws::Sender,
-    pub token: Arc<Mutex<String>>,
-    pub thread_out: Sender<ServerEvent>,
-    pub format: Format,
+pub struct Websocket {
+    ws: Option<ws::WebSocket<MyFactory>>,
+    ws_thread: Option<JoinHandle<()>>,
+    sender: Arc<Mutex<Option<ws::Sender>>>,
+    server_event_tx: Arc<Mutex<Option<Sender<ServerEvent>>>>,
+    server_event_from_handler_tx: Option<Sender<ServerEvent>>,
+    server_event_from_handler_rx: Option<Receiver<ServerEvent>>,
+    server_event_from_handler_thread: Option<JoinHandle<()>>,
+    server_event_from_handler_running: Arc<AtomicBool>,
+    token: Arc<Mutex<String>>,
+    audio_uuid: Arc<Mutex<Option<String>>>,
 }
 
-/// Websocket handle for the client to use
-#[no_mangle]
-#[repr(C)]
-pub struct Handle {
-    pub send_tx: Sender<ClientEvent>,
-    pub ws_out: Arc<Mutex<Option<ws::Sender>>>,
-    pub send_thread: Option<JoinHandle<()>>,
-    pub recv_thread: Option<JoinHandle<()>>,
-}
+impl Websocket {
+    pub fn new(token: Arc<Mutex<String>>) -> Websocket {
+        let (tx, rx) = channel();
 
-impl Handle {
-    pub fn close(&mut self) {
-        self.send_tx.send(ClientEvent::Disconnect).unwrap();
+        Websocket {
+            ws: None,
+            ws_thread: None,
+            sender: Arc::new(Mutex::new(None)),
+            server_event_tx: Arc::new(Mutex::new(None)),
+            server_event_from_handler_tx: Some(tx),
+            server_event_from_handler_rx: Some(rx),
+            server_event_from_handler_thread: None,
+            server_event_from_handler_running: Arc::new(AtomicBool::new(true)),
+            token,
+            audio_uuid: Arc::new(Mutex::new(None)),
+        }
+    }
 
-        let ws_out_option = &(*self.ws_out.lock().unwrap());
-        if let Some(ws_out) = ws_out_option {
-            ws_out.close(ws::CloseCode::Normal).unwrap();
+    /// Open the Websocket connection
+    pub fn open(
+        &mut self,
+        mode: &Mode,
+        format: &Format,
+        is_custom_speech: bool,
+        endpoint_id: &str,
+    ) {
+        if let Ok(sender_option) = self.sender.lock() {
+            if let Some(_) = *sender_option {
+                return;
+            }
         }
 
-        self.send_thread.take().unwrap().join().unwrap();
-        self.recv_thread.take().unwrap().join().unwrap();
+        let ws = ws::WebSocket::new(MyFactory {
+            sender: self.sender.clone(),
+            token: self.token.clone(),
+            server_event_tx: self.server_event_tx.clone(),
+            server_event_from_handler_tx: self.server_event_from_handler_tx.clone(),
+        }).unwrap();
+
+        self.ws = Some(ws);
+
+        // Url for the client
+        let url = Self::build_url(mode, format, is_custom_speech, endpoint_id);
+
+        // Queue a WebSocket connection to the url
+        if let Some(ref mut ws) = self.ws {
+            ws.connect(url).unwrap();
+        }
+
+        self.run();
+    }
+
+    /// Close the Websocket connection
+    pub fn close(&mut self) {
+        let mut ok = false;
+
+        // Shutdown Websocket if exists
+        if let Ok(sender_guard) = self.sender.lock() {
+            if let Some(ref sender) = *sender_guard {
+                match sender.shutdown() {
+                    Ok(_) => {
+                        ok = true;
+                        info!("Shutting down");
+                    }
+                    Err(err) => error!("{}", err),
+                }
+            }
+        }
+
+        // Wait for Websocket thread to end
+        if let Some(t) = self.ws_thread.take() {
+            t.join().unwrap();
+        }
+
+        // Set Websocket sender to None
+        if ok {
+            if let Ok(mut sender_guard) = self.sender.lock() {
+                *sender_guard = None;
+            }
+
+            self.ws.take();
+        }
+    }
+
+    /// Construct a channel for receiving server events
+    pub fn server_event_receiver(&mut self) -> Receiver<ServerEvent> {
+        let (tx, rx) = channel();
+
+        *self.server_event_tx.lock().unwrap() = Some(tx);
+
+        rx
+    }
+
+    fn run(&mut self) {
+        if self.ws.is_some() {
+            let running_1 = self.server_event_from_handler_running.clone();
+            let audio_uuid_1 = self.audio_uuid.clone();
+            let rx = self.server_event_from_handler_rx.take().unwrap();
+            self.server_event_from_handler_thread = Some(thread::spawn(move || {
+                while running_1.load(Ordering::Relaxed) {
+                    match rx.recv() {
+                        Ok(ServerEvent::TurnEnd) => {
+                            *audio_uuid_1.lock().unwrap() = None;
+                        }
+                        _ => {}
+                    }
+                }
+            }));
+
+            let ws = self.ws.take().unwrap();
+            self.ws_thread = Some(thread::spawn(move || match ws.run() {
+                Err(err) => error!("{}", err),
+                _ => {}
+            }));
+        }
+    }
+
+    fn build_url(mode: &Mode, format: &Format, is_custom_speech: bool, endpoint_id: &str) -> Url {
+        let language = match mode {
+            Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
+            Mode::Conversation(language) => language.to_string(),
+        };
+        let uri = if is_custom_speech {
+            format!(
+                    "wss://westus.stt.speech.microsoft.com/speech/recognition/{}/cognitiveservices/v1?cid={}&language={}&format={}",
+                    mode,
+                    endpoint_id,
+                    language,
+                    format
+                )
+        } else {
+            format!(
+                    "wss://speech.platform.bing.com/speech/recognition/{}/cognitiveservices/v1?language={}&format={}",
+                    mode,
+                    language,
+                    format
+                )
+        };
+
+        uri.parse().unwrap()
+    }
+
+    /// Send speech configuration data to Bing Speech API via Websocket
+    pub fn config(&self, cfg: &ConfigPayload) -> ws::Result<()> {
+        if let Ok(sender_guard) = self.sender.lock() {
+            if let Some(ref sender) = *sender_guard {
+                let now = Local::now().to_rfc3339();
+                let config_text = serde_json::to_string(&cfg).unwrap();
+                let text = format!(
+                    "Path: {}\r\nX-RequestId: {}\r\nX-Timestamp: {}\r\nContent-Type: {}\r\n\r\n{}",
+                    "speech.config",
+                    generate_uuid(),
+                    now,
+                    "application/json; charset=utf-8",
+                    config_text
+                );
+                let msg = ws::Message::Text(text);
+                return sender.send(msg);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Send audio data to Bing Speech API via Websocket
+    pub fn audio(&mut self, audio: &[u8]) -> ws::Result<()> {
+        if let Ok(sender_guard) = self.sender.lock() {
+            if let Some(ref sender) = *sender_guard {
+                let mut v = self.audio_uuid.lock().unwrap();
+                let uuid = if let Some(uuid) = v.clone() {
+                    uuid.clone()
+                } else {
+                    let uuid = generate_uuid();
+                    *v = Some(uuid.clone());
+                    uuid
+                };
+
+                let mut data = Vec::new();
+                let now = Local::now().to_rfc3339();
+                let text = format!(
+                    "Path: {}\r\nX-RequestId: {}\r\nX-Timestamp: {}\r\nContent-Type: {}\r\n\r\n",
+                    "audio", uuid, now, "audio/x-wav",
+                );
+
+                let header_len = text.len() as u16;
+                let s1 = ((header_len >> 8) & 0xFF) as u8;
+                let s2 = (header_len & 0xFF) as u8;
+                data.push(s1);
+                data.push(s2);
+                data.extend_from_slice(text.as_bytes());
+                data.extend_from_slice(&audio);
+
+                let msg = ws::Message::Binary(data);
+                return sender.send(msg);
+            }
+        }
+
+        Ok(())
     }
 }
 
-/// Trait to be implemented by the client for handling Bing Speech recognition events
-pub trait Handler {
-    fn on_turn_start(&mut self) {}
-    fn on_turn_end(&mut self) {}
-    fn on_speech_start_detected(&mut self) {}
-    fn on_speech_hypothesis(&mut self, Hypothesis) {}
-    fn on_speech_phrase(&mut self, Phrase) {}
-    fn on_speech_end_detected(&mut self) {}
+struct MyHandler {
+    token: Arc<Mutex<String>>,
+    server_event_tx: Arc<Mutex<Option<Sender<ServerEvent>>>>,
+    server_event_from_handler_tx: Option<Sender<ServerEvent>>,
 }
 
-impl Instance {
-    fn parse_server_message(&self, msg: Message) -> Result<()> {
+impl MyHandler {
+    fn parse_server_message(&self, msg: ws::Message) -> ws::Result<()> {
         match msg {
-            Message::Text(text) => self.parse_server_message_text(&text)?,
-            _ => warn!(target: "parse_server_message()", "Unimplemented"),
+            ws::Message::Text(text) => self.parse_server_message_text(&text)?,
+            _ => warn!("Unimplemented"),
         };
 
         Ok(())
     }
 
-    fn parse_server_message_text(&self, text: &str) -> Result<()> {
-        info!(target: "parse_server_message_text()", "Received From Server: {}", text);
+    fn parse_server_message_text(&self, text: &str) -> ws::Result<()> {
+        info!("Received From Server: {}", text);
 
         let sections: Vec<&str> = text.split("\r\n\r\n").collect();
         let header = sections[0];
@@ -112,15 +275,24 @@ impl Instance {
                     "speech.hypothesis" => {
                         let json = serde_json::from_slice(body.as_bytes()).unwrap();
                         ServerEvent::SpeechHypothesis(json)
-                    },
+                    }
                     "speech.phrase" => {
                         let value: serde_json::Value = serde_json::from_str(body).unwrap();
                         ServerEvent::SpeechPhrase(Phrase::from_json_value(&value).unwrap())
-                    },
+                    }
                     "speech.endDetected" => ServerEvent::SpeechEndDetected,
                     _ => ServerEvent::Unknown,
                 };
-                self.thread_out.send(event).unwrap();
+
+                if let Some(ref tx) = self.server_event_from_handler_tx {
+                    tx.send(event.clone()).unwrap();
+                }
+
+                if let Ok(guard) = self.server_event_tx.lock() {
+                    if let Some(ref server_event_tx) = *guard {
+                        server_event_tx.send(event).unwrap();
+                    }
+                }
             }
         }
 
@@ -128,71 +300,14 @@ impl Instance {
     }
 }
 
-/// Utility struct for communicating with Bing Speech API via Websocket using their protocol
-/// Right now, it primarily serves to generate and keep track of audio UUID.
-#[derive(Default)]
-pub struct Protocol {
-    audio_uuid: Option<String>,
-}
-
-impl Protocol {
-    /// Creates a new Protocol instance
-    pub fn new() -> Protocol {
-        Protocol { audio_uuid: None }
-    }
-
-    /// Send speech configuration data to Bing Speech API via Websocket
-    pub fn config(sender: &ws::Sender, cfg: &ConfigPayload) -> Result<()> {
-        let now = Local::now().to_rfc3339();
-        let config_text = serde_json::to_string(&cfg).unwrap();
-        let text = format!(
-            "Path: {}\r\nX-RequestId: {}\r\nX-Timestamp: {}\r\nContent-Type: {}\r\n\r\n{}",
-            "speech.config",
-            generate_uuid(),
-            now,
-            "application/json; charset=utf-8",
-            config_text
-        );
-        let msg = Message::Text(text);
-        sender.send(msg)
-    }
-
-    /// Send audio data to Bing Speech API via Websocket
-    pub fn audio(&mut self, sender: &ws::Sender, audio: &[u8]) -> Result<()> {
-        let uuid = if let Some(ref uuid) = self.audio_uuid {
-            uuid.clone()
-        } else {
-            let new_uuid = generate_uuid();
-            self.audio_uuid = Some(new_uuid.clone());
-            new_uuid
-        };
-
-        let mut data = Vec::new();
-        let now = Local::now().to_rfc3339();
-        let text = format!(
-            "Path: {}\r\nX-RequestId: {}\r\nX-Timestamp: {}\r\nContent-Type: {}\r\n\r\n",
-            "audio", uuid, now, "audio/x-wav",
-        );
-
-        let header_len = text.len() as u16;
-        let s1 = ((header_len >> 8) & 0xFF) as u8;
-        let s2 = (header_len & 0xFF) as u8;
-        data.push(s1);
-        data.push(s2);
-        data.extend_from_slice(text.as_bytes());
-        data.extend_from_slice(&audio);
-
-        let msg = Message::Binary(data);
-        sender.send(msg)
-    }
-}
-
-impl ws::Handler for Instance {
-    fn build_request(&mut self, url: &Url) -> Result<Request> {
-        let mut request = Request::from_url(url)?;
+impl ws::Handler for MyHandler {
+    fn build_request(&mut self, url: &Url) -> ws::Result<ws::Request> {
+        let mut request = ws::Request::from_url(url)?;
         {
             let headers = request.headers_mut();
-            let token = format!("Bearer {}", &self.token.lock().unwrap()).as_bytes().to_vec();
+            let token = format!("Bearer {}", &self.token.lock().unwrap())
+                .as_bytes()
+                .to_vec();
             let connection_id = Uuid::new_v4()
                 .to_string()
                 .replace("-", "")
@@ -204,36 +319,65 @@ impl ws::Handler for Instance {
         Ok(request)
     }
 
-    fn on_open(&mut self, _shake: Handshake) -> Result<()> {
-        self.thread_out
-            .send(ServerEvent::Connect(self.ws_out.clone()))
-            .map_err(|err| {
-                Error::new(
-                    ErrorKind::Internal,
-                    format!("Unable to communicate between threads: {:?}.", err),
-                )
-            })
+    fn on_open(&mut self, _shake: ws::Handshake) -> ws::Result<()> {
+        info!("Connected");
+        Ok(())
     }
 
-    fn on_message(&mut self, msg: Message) -> Result<()> {
+    fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
         self.parse_server_message(msg)?;
         Ok(())
     }
 
-    fn on_close(&mut self, _code: CloseCode, _reason: &str) {
-        if let Err(err) = self.thread_out.send(ServerEvent::Disconnect) {
-            error!(target: "on_close()", "{}", err);
+    fn on_close(&mut self, _code: ws::CloseCode, _reason: &str) {
+        if let Ok(guard) = self.server_event_tx.lock() {
+            if let Some(ref server_event_tx) = *guard {
+                if let Err(err) = server_event_tx.send(ServerEvent::Disconnect) {
+                    error!(target: "on_close()", "{}", err);
+                }
+            }
         }
+
+        info!("Disconnected");
     }
 
-    fn on_error(&mut self, err: Error) {
-        error!(target: "on_error()", "{}", err);
+    fn on_error(&mut self, err: ws::Error) {
+        error!("{}", err);
     }
 }
 
-impl Handler for Protocol {
-    fn on_turn_end(&mut self) {
-        self.audio_uuid = None;
+struct MyFactory {
+    sender: Arc<Mutex<Option<ws::Sender>>>,
+    token: Arc<Mutex<String>>,
+    server_event_tx: Arc<Mutex<Option<Sender<ServerEvent>>>>,
+    server_event_from_handler_tx: Option<Sender<ServerEvent>>,
+}
+
+impl ws::Factory for MyFactory {
+    type Handler = MyHandler;
+
+    fn connection_made(&mut self, sender: ws::Sender) -> MyHandler {
+        if let Ok(mut sender_guard) = self.sender.lock() {
+            *sender_guard = Some(sender);
+        }
+
+        MyHandler {
+            token: self.token.clone(),
+            server_event_tx: self.server_event_tx.clone(),
+            server_event_from_handler_tx: self.server_event_from_handler_tx.clone(),
+        }
+    }
+
+    fn client_connected(&mut self, sender: ws::Sender) -> MyHandler {
+        if let Ok(mut sender_guard) = self.sender.lock() {
+            *sender_guard = Some(sender);
+        }
+
+        MyHandler {
+            token: self.token.clone(),
+            server_event_tx: self.server_event_tx.clone(),
+            server_event_from_handler_tx: self.server_event_from_handler_tx.clone(),
+        }
     }
 }
 

@@ -43,5 +43,5 @@ extern crate uuid;
 // C
 extern crate libc;
 
-pub mod error;
+pub mod errors;
 pub mod speech;

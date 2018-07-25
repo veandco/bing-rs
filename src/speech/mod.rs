@@ -16,20 +16,16 @@ type HttpsConnector = hyper_tls::HttpsConnector<hyper::client::HttpConnector>;
 // serde_json
 use serde_json;
 
-// ws
-use ws;
-
 // internal
-pub mod c;
+//pub mod c;
 pub mod websocket;
 use self::websocket::*;
-use error::*;
+use errors::*;
 
 // std
 use std::cell::RefCell;
 use std::fmt::{self, Display};
 use std::rc::Rc;
-use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -37,10 +33,10 @@ use std::time::Duration;
 #[no_mangle]
 #[repr(C)]
 pub struct Speech {
+    pub token: Arc<Mutex<String>>,
     core: Rc<RefCell<Core>>,
     client: Rc<Client<HttpsConnector<HttpConnector>>>,
     subscription_key: String,
-    token: Arc<Mutex<String>>,
     is_custom_speech: bool,
     endpoint_id: String,
 }
@@ -62,10 +58,10 @@ impl Speech {
         let core = Core::new()?;
         let client = Client::builder().build(HttpsConnector::new(4));
         Ok(Speech {
+            token: Arc::new(Mutex::new(String::new())),
             core: Rc::new(RefCell::new(core)),
             client: Rc::new(client),
             subscription_key: subscription_key.to_string(),
-            token: Arc::new(Mutex::new(String::new())),
             is_custom_speech: false,
             endpoint_id: String::new(),
         })
@@ -86,142 +82,6 @@ impl Speech {
         self.endpoint_id = String::from(endpoint_id);
     }
 
-    /// Switch to Websocket protocol
-    ///
-    /// See `examples/websocket.rs` for an example on how to use the Websocket protocol.
-    pub fn websocket(
-        &mut self,
-        mode: &Mode,
-        format: Format,
-        handler: Arc<Mutex<Handler + Send + Sync>>,
-    ) -> Result<Handle> {
-        let language = match &mode {
-            Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
-            Mode::Conversation(language) => language.to_string(),
-        };
-        let uri = if self.is_custom_speech {
-            format!(
-                "wss://westus.stt.speech.microsoft.com/speech/recognition/{}/cognitiveservices/v1?cid={}&language={}&format={}",
-                mode,
-                &self.endpoint_id,
-                language,
-                format
-            )
-        } else {
-            format!(
-                "wss://speech.platform.bing.com/speech/recognition/{}/cognitiveservices/v1?language={}&format={}",
-                mode,
-                language,
-                format
-            )
-        };
-        let token = self.token.clone();
-        let ws_out = Arc::new(Mutex::new(None));
-        let ws_out_clone = ws_out.clone();
-
-        // Spawn thread for running the Websocket connection and keeping it alive
-        let (recv_tx, recv_rx) = channel();
-        let recv_thread = thread::spawn(move || {
-            info!(target: "websocket()", "Connecting to Websocket at {}", &uri);
-            if let Err(err) = ws::connect(uri, |out| {
-                *ws_out_clone.lock().unwrap() = Some(out.clone());
-                Instance {
-                    ws_out: out,
-                    token: token.clone(),
-                    thread_out: recv_tx.clone(),
-                    format: format.clone(),
-                }
-            }) {
-                error!(target: "websocket()", "{}", err);
-            }
-        });
-
-        // Spawn threads for handling client and server events
-        let (send_tx, send_rx) = channel();
-        let send_thread = match recv_rx.recv() {
-            Ok(ServerEvent::Connect(sender)) => {
-                info!(target: "websocket()", "Connected to Websocket!");
-
-                let cfg = default_speech_config();
-                Protocol::config(&sender, &cfg).unwrap();
-                let mut protocol = Arc::new(Mutex::new(Protocol::new()));
-
-                // Spawn a thread for listening to events from user to server (e.g. microphone input)
-                let mut protocol_t1 = protocol.clone();
-                let t1 = thread::spawn(move || loop {
-                    match send_rx.recv() {
-                        Ok(event) => match event {
-                            ClientEvent::Audio(audio) => {
-                                let mut protocol = protocol_t1.lock().unwrap();
-                                match protocol.audio(&sender, &audio) {
-                                    Ok(_) => info!(target: "websocket()", "Sent audio.."),
-                                    Err(err) => error!(target: "websocket()", "{}", err),
-                                }
-                            }
-                            ClientEvent::Disconnect => break,
-                        },
-                        Err(err) => {
-                            error!(target: "websocket()", "{}", err);
-                            break;
-                        }
-                    }
-                });
-
-                // Spawn a thread for listening to events from server to user (e.g. speech start detected)
-                let mut protocol_t2 = protocol.clone();
-                let _t2 = thread::spawn(move || loop {
-                    match recv_rx.recv() {
-                        Ok(event) => {
-                            let mut handler = handler.lock().unwrap();
-                            let mut protocol = protocol_t2.lock().unwrap();
-                            match event {
-                                ServerEvent::TurnStart => {
-                                    protocol.on_turn_start();
-                                    handler.on_turn_start();
-                                }
-                                ServerEvent::TurnEnd => {
-                                    protocol.on_turn_end();
-                                    handler.on_turn_end();
-                                }
-                                ServerEvent::SpeechStartDetected => {
-                                    protocol.on_speech_start_detected();
-                                    handler.on_speech_start_detected();
-                                }
-                                ServerEvent::SpeechHypothesis(hypothesis) => {
-                                    protocol.on_speech_hypothesis(hypothesis.clone());
-                                    handler.on_speech_hypothesis(hypothesis);
-                                }
-                                ServerEvent::SpeechPhrase(response) => {
-                                    protocol.on_speech_phrase(response.clone());
-                                    handler.on_speech_phrase(response);
-                                }
-                                ServerEvent::SpeechEndDetected => {
-                                    protocol.on_speech_end_detected();
-                                    handler.on_speech_end_detected();
-                                }
-                                _ => {}
-                            };
-                        }
-                        Err(err) => {
-                            error!(target: "websocket()", "{}", err);
-                            break;
-                        }
-                    }
-                });
-
-                t1
-            }
-            _ => unimplemented!(),
-        };
-
-        Ok(Handle {
-            send_tx,
-            ws_out,
-            send_thread: Some(send_thread),
-            recv_thread: Some(recv_thread),
-        })
-    }
-
     /// Fetch new Bing Speech token
     ///
     /// # Examples
@@ -238,7 +98,8 @@ impl Speech {
             "https://westus.api.cognitive.microsoft.com/sts/v1.0/issueToken"
         } else {
             "https://api.cognitive.microsoft.com/sts/v1.0/issueToken"
-        }.parse().unwrap();
+        }.parse()
+            .unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -253,16 +114,14 @@ impl Speech {
         let work = client.request(request).and_then(|res| {
             let header = res.headers().clone();
             let status = res.status();
-            res.into_body()
-                .concat2()
-                .map(move |chunks| {
-                    if chunks.is_empty() {
-                        Ok((header, status, None))
-                    } else {
-                        let token = String::from_utf8(chunks.to_vec())?;
-                        Ok((header, status, Some(token)))
-                    }
-                })
+            res.into_body().concat2().map(move |chunks| {
+                if chunks.is_empty() {
+                    Ok((header, status, None))
+                } else {
+                    let token = String::from_utf8(chunks.to_vec())?;
+                    Ok((header, status, Some(token)))
+                }
+            })
         });
 
         let result = core_ref.run(work)?;
@@ -280,41 +139,38 @@ impl Speech {
         let subscription_key = self.subscription_key.clone();
         let is_custom_speech = self.is_custom_speech;
 
-        thread::spawn(move || {
-            loop {
-                thread::sleep(Duration::from_secs(9 * 60));
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(9 * 60));
 
-                let token_2 = token_1.clone();
-                let uri: Uri = if is_custom_speech {
-                    "https://westus.api.cognitive.microsoft.com/sts/v1.0/issueToken"
-                } else {
-                    "https://api.cognitive.microsoft.com/sts/v1.0/issueToken"
-                }.parse().unwrap();
+            let token_2 = token_1.clone();
+            let uri: Uri = if is_custom_speech {
+                "https://westus.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+            } else {
+                "https://api.cognitive.microsoft.com/sts/v1.0/issueToken"
+            }.parse()
+                .unwrap();
 
-                let request = Request::builder()
-                    .method(Method::POST)
-                    .uri(uri)
-                    .header("Ocp-Apim-Subscription-Key", subscription_key.as_str())
-                    .header("Content-Length", "0")
-                    .body(Body::empty())
-                    .unwrap();
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header("Ocp-Apim-Subscription-Key", subscription_key.as_str())
+                .header("Content-Length", "0")
+                .body(Body::empty())
+                .unwrap();
 
-                let mut core = Core::new().unwrap();
-                let client = Client::builder().build(HttpsConnector::new(1));
-                let work = client.request(request).and_then(|res| {
-                    res.into_body()
-                        .concat2()
-                        .map(move |chunks| {
-                            if !chunks.is_empty() {
-                                let token = String::from_utf8(chunks.to_vec()).unwrap();
-                                if let Ok(mut t) = token_2.lock() {
-                                    *t = token;
-                                }
-                            }
-                        })
-                });
-                core.run(work).unwrap();
-            }
+            let mut core = Core::new().unwrap();
+            let client = Client::builder().build(HttpsConnector::new(1));
+            let work = client.request(request).and_then(|res| {
+                res.into_body().concat2().map(move |chunks| {
+                    if !chunks.is_empty() {
+                        let token = String::from_utf8(chunks.to_vec()).unwrap();
+                        if let Ok(mut t) = token_2.lock() {
+                            *t = token;
+                        }
+                    }
+                })
+            });
+            core.run(work).unwrap();
         });
     }
 
@@ -346,7 +202,8 @@ impl Speech {
                 language,
                 format
             )
-        }.parse().unwrap();
+        }.parse()
+            .unwrap();
 
         let mut core_ref = self.core.try_borrow_mut()?;
         let client = &self.client;
@@ -374,7 +231,10 @@ impl Speech {
         let request = Request::builder()
             .method(Method::POST)
             .uri(uri)
-            .header("Authorization", format!("Bearer {}", self.token.lock().unwrap().clone()).as_str())
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.token.lock().unwrap().clone()).as_str(),
+            )
             .header("Content-Type", content_type)
             .body(Body::from(audio))
             .unwrap();
@@ -383,17 +243,15 @@ impl Speech {
         let work = client.request(request).and_then(|res| {
             let header = res.headers().clone();
             let status = res.status();
-            res.into_body()
-                .concat2()
-                .map(move |chunks| {
-                    if chunks.is_empty() {
-                        Ok((header, status, None))
-                    } else {
-                        let value: serde_json::Value = serde_json::from_slice(&chunks.to_vec())?;
-                        let phrase = Phrase::from_json_value(&value)?;
-                        Ok((header, status, Some(phrase)))
-                    }
-                })
+            res.into_body().concat2().map(move |chunks| {
+                if chunks.is_empty() {
+                    Ok((header, status, None))
+                } else {
+                    let value: serde_json::Value = serde_json::from_slice(&chunks.to_vec())?;
+                    let phrase = Phrase::from_json_value(&value)?;
+                    Ok((header, status, Some(phrase)))
+                }
+            })
         });
         core_ref.run(work)?
     }
@@ -489,12 +347,12 @@ impl Phrase {
             let recognition_status = object["RecognitionStatus"].as_str().unwrap();
             if recognition_status == "Success" {
                 if object.contains_key("DisplayText") {
-                    return Ok(Phrase::Simple(serde_json::from_value(value.clone())?))
+                    return Ok(Phrase::Simple(serde_json::from_value(value.clone())?));
                 } else {
-                    return Ok(Phrase::Detailed(serde_json::from_value(value.clone())?))
+                    return Ok(Phrase::Detailed(serde_json::from_value(value.clone())?));
                 }
             } else if recognition_status == "InitialSilenceTimeout" {
-                return Ok(Phrase::Silence(serde_json::from_value(value.clone())?))
+                return Ok(Phrase::Silence(serde_json::from_value(value.clone())?));
             }
         }
 
@@ -687,7 +545,7 @@ impl Display for Phrase {
 }
 
 /// Auto-detected speech configuration payload
-fn default_speech_config() -> ConfigPayload {
+pub fn default_speech_config() -> ConfigPayload {
     #[cfg(target_os = "windows")]
     let platform = "Windows";
     #[cfg(target_os = "osx")]
