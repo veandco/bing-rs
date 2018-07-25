@@ -38,7 +38,7 @@ fn main() {
     let mut ws = Websocket::new(client.token.clone());
     let ws_rx = ws.server_event_receiver();
     let mode = Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates);
-    ws.open(&mode, &Format::Simple, false, "");
+    ws.open(&mode, &Format::Detailed, false, "");
     ws.config(&default_speech_config()).unwrap();
 
     // Load audio data
@@ -82,22 +82,22 @@ fn main() {
         while running_2.load(Ordering::Relaxed) {
             match ws_rx.recv() {
                 Ok(event) => match event {
-                    ServerEvent::TurnStart => println!("Bing Speech: Turn Start\n"),
-                    ServerEvent::TurnEnd => println!("Bing Speech: Turn End\n"),
+                    ServerEvent::TurnStart => println!("Turn Start\n"),
+                    ServerEvent::TurnEnd => println!("Turn End\n"),
                     ServerEvent::SpeechStartDetected => {
-                        println!("Bing Speech: Speech Start Detected\n")
+                        println!("Speech Start Detected\n")
                     }
                     ServerEvent::SpeechHypothesis(hypothesis) => {
-                        println!("Bing Speech: Speech Hypothesis");
-                        println!("==============================");
+                        println!("Speech Hypothesis");
+                        println!("=================");
                         println!("{}\n", hypothesis);
                     }
                     ServerEvent::SpeechEndDetected => {
-                        println!("Bing Speech: Speech End Detected\n")
+                        println!("Speech End Detected\n")
                     }
                     ServerEvent::SpeechPhrase(phrase) => {
-                        println!("Bing Speech: Speech Phrase");
-                        println!("==========================");
+                        println!("Speech Phrase");
+                        println!("=============");
                         println!("{}\n", phrase);
                     }
                     _ => {}
