@@ -62,6 +62,9 @@ fn main() {
     // Setup OS signal handler
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
 
+    // Setup variables
+    let awake = Arc::new(AtomicBool::new(true));
+
     // Load audio data
     let mut file = File::open("assets/audio.raw").unwrap();
     let mut audio = Vec::new();
@@ -72,6 +75,17 @@ fn main() {
     for _ in 0..1024 * 50 {
         audio.push(0);
     }
+
+    // Switch awake mode periodically
+    let awake_1 = awake.clone();
+    let running_1 = running.clone();
+    thread::spawn(move || {
+        while running_1.load(Ordering::Relaxed) {
+            let awake_neg = !awake_1.load(Ordering::Relaxed);
+            awake_1.store(awake_neg, Ordering::Relaxed);
+            thread::sleep(Duration::from_secs(5));
+        }
+    });
 
     // Setup Bing Speech Client
     let mut client = Speech::new(&env::var("SUBSCRIPTION_KEY").unwrap()).unwrap();
@@ -84,23 +98,42 @@ fn main() {
     let format = Format::Detailed;
     let handler = Arc::new(Mutex::new(MyHandler{}));
     let mut ws = Websocket::new();
-    ws.connect(token.clone(), &mode, &format, false, "", handler.clone()).unwrap();
 
     // Send audio data
+    let awake_1 = awake.clone();
     let running_1 = running.clone();
     thread::spawn(move || {
-        while running_1.load(Ordering::Relaxed) {
-            const BUFFER_SIZE: usize = 4096;
+        let mut awake = awake_1.load(Ordering::Relaxed);
 
-            // Send audio data to Bing
-            if let Err(_) = ws.audio(&audio[i..i + BUFFER_SIZE].to_vec()) {
-                warn!("Failed to send audio");
+        while running_1.load(Ordering::Relaxed) {
+            let previous_awake = awake;
+            awake = awake_1.load(Ordering::Relaxed);
+
+            // When awake state changes, connect / disconnect Websocket
+            if awake != previous_awake {
+                if awake {
+                    info!("Awake");
+                    ws.connect(token.clone(), &mode, &format, false, "", handler.clone()).unwrap();
+                } else {
+                    info!("Sleep");
+                    ws.disconnect().unwrap();
+                }
             }
 
-            // Go to the next audio data chunk
-            i += BUFFER_SIZE;
-            if audio.len() - i < BUFFER_SIZE {
-                i = 0;
+            // If we're awake, send audio data
+            if awake {
+                const BUFFER_SIZE: usize = 4096;
+
+                // Send audio data to Bing
+                if let Err(_) = ws.audio(&audio[i..i + BUFFER_SIZE].to_vec()) {
+                    warn!("Failed to send audio");
+                }
+
+                // Go to the next audio data chunk
+                i += BUFFER_SIZE;
+                if audio.len() - i < BUFFER_SIZE {
+                    i = 0;
+                }
             }
 
             thread::sleep(Duration::from_millis(100));

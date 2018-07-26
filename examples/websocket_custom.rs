@@ -4,6 +4,8 @@ extern crate chan;
 extern crate chan_signal;
 extern crate chrono;
 extern crate env_logger;
+#[macro_use]
+extern crate log;
 extern crate serde_json;
 extern crate ws;
 
@@ -11,13 +13,45 @@ use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use bing_rs::speech::websocket::*;
 use bing_rs::speech::*;
 use chan_signal::Signal;
+
+struct MyHandler;
+
+impl Handler for MyHandler {
+    fn on_turn_start(&mut self) {
+        println!("Turn Start\n");
+    }
+
+    fn on_turn_end(&mut self) {
+        println!("Turn End\n");
+    }
+
+    fn on_speech_start(&mut self) {
+        println!("Speech Start Detected\n");
+    }
+
+    fn on_speech_hypothesis(&mut self, hypothesis: Hypothesis) {
+        println!("Speech Hypothesis");
+        println!("=================");
+        println!("{}\n", hypothesis);
+    }
+
+    fn on_speech_end(&mut self) {
+        println!("Speech End Detected\n");
+    }
+
+    fn on_speech_phrase(&mut self, phrase: Phrase) {
+        println!("Speech Phrase");
+        println!("=============");
+        println!("{}\n", phrase);
+    }
+}
 
 fn main() {
     env_logger::init();
@@ -28,28 +62,10 @@ fn main() {
     // Setup OS signal handler
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
 
-    // Fetch token
-    let mut client = Speech::new(&env::var("SUBSCRIPTION_KEY").unwrap()).unwrap();
-    client.set_custom_speech(true);
-    client.set_endpoint_id(&env::var("ENDPOINT_ID").unwrap());
-    client.fetch_token().unwrap();
-    client.auto_fetch_token();
-
-    // Open Websocket Connection
-    let mut ws = Websocket::new(client.token.clone());
-    let ws_rx = ws.server_event_receiver();
-    let mode = Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates);
-    ws.open(
-        &mode,
-        &Format::Detailed,
-        true,
-        &env::var("ENDPOINT_ID").unwrap(),
-    );
-    ws.config(&default_speech_config()).unwrap();
-
     // Load audio data
     let mut file = File::open("assets/audio.raw").unwrap();
     let mut audio = Vec::new();
+    let mut i = 0;
     file.read_to_end(&mut audio).unwrap();
 
     // Add some silence to the end of audio data
@@ -57,16 +73,31 @@ fn main() {
         audio.push(0);
     }
 
-    // Run continuous audio data transfer in another thread
+    // Setup Bing Speech Client
+    let mut client = Speech::new(&env::var("SUBSCRIPTION_KEY").unwrap()).unwrap();
+    let token = client.token.clone();
+    client.set_custom_speech(true);
+    client.set_endpoint_id(&env::var("ENDPOINT_ID").unwrap());
+    client.fetch_token().unwrap();
+    client.auto_fetch_token();
+
+    // Setup Bing Speech Websocket
+    let mode = Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates);
+    let format = Format::Detailed;
+    let handler = Arc::new(Mutex::new(MyHandler{}));
+    let mut ws = Websocket::new();
+    ws.connect(token.clone(), &mode, &format, true, &env::var("ENDPOINT_ID").unwrap(), handler.clone()).unwrap();
+
+    // Send audio data
     let running_1 = running.clone();
     thread::spawn(move || {
-        let mut i = 0;
-
         while running_1.load(Ordering::Relaxed) {
             const BUFFER_SIZE: usize = 4096;
 
             // Send audio data to Bing
-            ws.audio(&audio[i..i + BUFFER_SIZE].to_vec()).unwrap();
+            if let Err(_) = ws.audio(&audio[i..i + BUFFER_SIZE].to_vec()) {
+                warn!("Failed to send audio");
+            }
 
             // Go to the next audio data chunk
             i += BUFFER_SIZE;
@@ -74,43 +105,7 @@ fn main() {
                 i = 0;
             }
 
-            // Wait for some time to simulate real microphone audio data period
             thread::sleep(Duration::from_millis(100));
-        }
-
-        // Close the Websocket connection
-        ws.close();
-    });
-
-    let running_2 = running.clone();
-    thread::spawn(move || {
-        while running_2.load(Ordering::Relaxed) {
-            match ws_rx.recv() {
-                Ok(event) => match event {
-                    ServerEvent::TurnStart => println!("Turn Start\n"),
-                    ServerEvent::TurnEnd => println!("Turn End\n"),
-                    ServerEvent::SpeechStartDetected => {
-                        println!("Speech Start Detected\n")
-                    }
-                    ServerEvent::SpeechHypothesis(hypothesis) => {
-                        println!("Speech Hypothesis");
-                        println!("=================");
-                        println!("{}\n", hypothesis);
-                    }
-                    ServerEvent::SpeechEndDetected => {
-                        println!("Speech End Detected\n")
-                    }
-                    ServerEvent::SpeechPhrase(phrase) => {
-                        println!("Speech Phrase");
-                        println!("=============");
-                        println!("{}\n", phrase);
-                    }
-                    _ => {}
-                },
-                Err(err) => {
-                    println!("Error: {}", err);
-                }
-            }
         }
     });
 

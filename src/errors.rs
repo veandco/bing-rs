@@ -6,6 +6,7 @@ error_chain!{
         Io(::std::io::Error);
         SerdeJson(::serde_json::Error);
         FromUtf(::std::string::FromUtf8Error);
+        Url(::url::ParseError);
         Ws(::ws::Error);
     }
 }

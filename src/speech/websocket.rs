@@ -1,7 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use url::Url;
 use uuid::Uuid;
 use ws;
@@ -10,6 +8,16 @@ use chrono::prelude::*;
 use serde_json;
 
 use speech::*;
+
+/// Server event handler
+pub trait Handler {
+    fn on_turn_start(&mut self) {}
+    fn on_turn_end(&mut self) {}
+    fn on_speech_start(&mut self) {}
+    fn on_speech_end(&mut self) {}
+    fn on_speech_hypothesis(&mut self, _hypothesis: Hypothesis) {}
+    fn on_speech_phrase(&mut self, _phrase: Phrase) {}
+}
 
 /// Enum of event that comes from server
 #[derive(Clone)]
@@ -26,183 +34,105 @@ pub enum ServerEvent {
 }
 
 pub struct Websocket {
-    ws: Option<ws::WebSocket<MyFactory>>,
-    ws_thread: Option<JoinHandle<()>>,
     sender: Arc<Mutex<Option<ws::Sender>>>,
-    server_event_tx: Arc<Mutex<Option<Sender<ServerEvent>>>>,
-    server_event_from_handler_tx: Option<Sender<ServerEvent>>,
-    server_event_from_handler_rx: Option<Receiver<ServerEvent>>,
-    server_event_from_handler_thread: Option<JoinHandle<()>>,
-    server_event_from_handler_running: Arc<AtomicBool>,
-    token: Arc<Mutex<String>>,
     audio_uuid: Arc<Mutex<Option<String>>>,
 }
 
+pub struct MyHandler {
+    token: Arc<Mutex<String>>,
+    handler: Arc<Mutex<Handler + Send + Sync>>,
+    audio_uuid: Arc<Mutex<Option<String>>>,
+}
+
+struct Factory {
+    sender: Arc<Mutex<Option<ws::Sender>>>,
+    token: Arc<Mutex<String>>,
+    handler: Arc<Mutex<Handler + Send + Sync>>,
+    audio_uuid: Arc<Mutex<Option<String>>>,
+}
+
+impl ws::Factory for Factory {
+    type Handler = MyHandler;
+
+    fn connection_made(&mut self, sender: ws::Sender) -> MyHandler {
+        *self.sender.lock().unwrap() = Some(sender);
+
+        MyHandler{
+            token: self.token.clone(),
+            handler: self.handler.clone(),
+            audio_uuid: self.audio_uuid.clone(),
+        }
+    }
+
+    fn client_connected(&mut self, sender: ws::Sender) -> MyHandler {
+        *self.sender.lock().unwrap() = Some(sender);
+
+        MyHandler{
+            token: self.token.clone(),
+            handler: self.handler.clone(),
+            audio_uuid: self.audio_uuid.clone(),
+        }
+    }
+}
+
 impl Websocket {
-    pub fn new(token: Arc<Mutex<String>>) -> Websocket {
-        Websocket {
-            ws: None,
-            ws_thread: None,
-            sender: Arc::new(Mutex::new(None)),
-            server_event_tx: Arc::new(Mutex::new(None)),
-            server_event_from_handler_tx: None,
-            server_event_from_handler_rx: None,
-            server_event_from_handler_thread: None,
-            server_event_from_handler_running: Arc::new(AtomicBool::new(true)),
-            token,
-            audio_uuid: Arc::new(Mutex::new(None)),
+    pub fn new() -> Websocket {
+        let sender = Arc::new(Mutex::new(None));
+        let audio_uuid = Arc::new(Mutex::new(None));
+
+        Websocket{
+            sender,
+            audio_uuid,
         }
     }
 
     /// Open the Websocket connection
-    pub fn open(
-        &mut self,
+    pub fn connect(
+        &self,
+        token: Arc<Mutex<String>>,
         mode: &Mode,
         format: &Format,
         is_custom_speech: bool,
         endpoint_id: &str,
-    ) {
-        let (tx, rx) = channel();
-        self.server_event_from_handler_tx = Some(tx);
-        self.server_event_from_handler_rx = Some(rx);
-
-        if let Ok(sender_option) = self.sender.lock() {
-            if let Some(_) = *sender_option {
-                return;
-            }
-        }
-
-        let ws = ws::WebSocket::new(MyFactory {
+        handler: Arc<Mutex<Handler + Send + Sync>>,
+    ) -> Result<()> {
+        // Create new WebSocket instance
+        let mut ws = ws::WebSocket::new(Factory{
             sender: self.sender.clone(),
-            token: self.token.clone(),
-            server_event_tx: self.server_event_tx.clone(),
-            server_event_from_handler_tx: self.server_event_from_handler_tx.clone(),
+            token: token.clone(),
+            handler: handler.clone(),
+            audio_uuid: self.audio_uuid.clone(),
         }).unwrap();
 
-        self.ws = Some(ws);
-
-        // Url for the client
+        // Connect to Bing Speech Websocket endpoint
         let url = Self::build_url(mode, format, is_custom_speech, endpoint_id);
+        ws.connect(url.parse()?)?;
+        thread::spawn(move || {
+            ws.run().unwrap();
+        });
 
-        // Queue a WebSocket connection to the url
-        if let Some(ref mut ws) = self.ws {
-            ws.connect(url).unwrap();
-        }
-
-        self.run();
-    }
-
-    /// Close the Websocket connection
-    pub fn close(&mut self) {
-        let mut ok = false;
-
-        // Shutdown Websocket if exists
-        if let Ok(sender_guard) = self.sender.lock() {
-            if let Some(ref sender) = *sender_guard {
-                match sender.shutdown() {
-                    Ok(_) => {
-                        ok = true;
-                        info!("Shutting down");
-                    }
-                    Err(err) => error!("{}", err),
-                }
-            }
-        }
-
-        // Wait for Websocket thread to end
-        if let Some(t) = self.ws_thread.take() {
-            t.join().unwrap();
-        }
-
-        // Set Websocket sender to None
-        if ok {
-            if let Ok(mut sender_guard) = self.sender.lock() {
-                *sender_guard = None;
-            }
-
-            self.ws.take();
-        }
-    }
-
-    /// Construct a channel for receiving server events
-    pub fn server_event_receiver(&mut self) -> Receiver<ServerEvent> {
-        let (tx, rx) = channel();
-
-        *self.server_event_tx.lock().unwrap() = Some(tx);
-
-        rx
-    }
-
-    fn run(&mut self) {
-        if self.ws.is_some() {
-            let running_1 = self.server_event_from_handler_running.clone();
-            let audio_uuid_1 = self.audio_uuid.clone();
-            if let Some(rx) = self.server_event_from_handler_rx.take() {
-                self.server_event_from_handler_thread = Some(thread::spawn(move || {
-                    while running_1.load(Ordering::Relaxed) {
-                        match rx.recv() {
-                            Ok(ServerEvent::TurnEnd) => {
-                                *audio_uuid_1.lock().unwrap() = None;
-                            }
-                            _ => {}
-                        }
-                    }
-                }));
-            }
-
-            let ws = self.ws.take().unwrap();
-            self.ws_thread = Some(thread::spawn(move || match ws.run() {
-                Err(err) => error!("{}", err),
-                _ => {}
-            }));
-        }
-    }
-
-    fn build_url(mode: &Mode, format: &Format, is_custom_speech: bool, endpoint_id: &str) -> Url {
-        let language = match mode {
-            Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
-            Mode::Conversation(language) => language.to_string(),
-        };
-        let uri = if is_custom_speech {
-            format!(
-                    "wss://westus.stt.speech.microsoft.com/speech/recognition/{}/cognitiveservices/v1?cid={}&language={}&format={}",
-                    mode,
-                    endpoint_id,
-                    language,
-                    format
-                )
-        } else {
-            format!(
-                    "wss://speech.platform.bing.com/speech/recognition/{}/cognitiveservices/v1?language={}&format={}",
-                    mode,
-                    language,
-                    format
-                )
-        };
-
-        uri.parse().unwrap()
+        Ok(())
     }
 
     /// Send speech configuration data to Bing Speech API via Websocket
-    pub fn config(&self, cfg: &ConfigPayload) -> ws::Result<()> {
-        if let Ok(sender_guard) = self.sender.lock() {
-            if let Some(ref sender) = *sender_guard {
-                let now = Local::now().to_rfc3339();
-                let config_text = serde_json::to_string(&cfg).unwrap();
-                let text = format!(
-                    "Path: {}\r\nX-RequestId: {}\r\nX-Timestamp: {}\r\nContent-Type: {}\r\n\r\n{}",
-                    "speech.config",
-                    generate_uuid(),
-                    now,
-                    "application/json; charset=utf-8",
-                    config_text
-                );
-                let msg = ws::Message::Text(text);
-                return sender.send(msg);
-            }
-        }
+    pub fn config(&mut self, cfg: &ConfigPayload) -> ws::Result<()> {
+        let now = Local::now().to_rfc3339();
+        let config_text = serde_json::to_string(&cfg).unwrap();
+        let text = format!(
+            "Path: {}\r\nX-RequestId: {}\r\nX-Timestamp: {}\r\nContent-Type: {}\r\n\r\n{}",
+            "speech.config",
+            generate_uuid(),
+            now,
+            "application/json; charset=utf-8",
+            config_text
+        );
 
-        Ok(())
+        let msg = ws::Message::Text(text);
+        if let Some(ref mut s) = *self.sender.lock().unwrap() {
+            s.send(msg)
+        } else {
+            Ok(())
+        }
     }
 
     /// Send audio data to Bing Speech API via Websocket
@@ -240,12 +170,39 @@ impl Websocket {
 
         Ok(())
     }
-}
 
-struct MyHandler {
-    token: Arc<Mutex<String>>,
-    server_event_tx: Arc<Mutex<Option<Sender<ServerEvent>>>>,
-    server_event_from_handler_tx: Option<Sender<ServerEvent>>,
+    pub fn disconnect(&mut self) -> Result<()> {
+        let sender = self.sender.lock().unwrap();
+
+        if let Some(ref sender) = *sender {
+            Ok(sender.shutdown()?)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn build_url(mode: &Mode, format: &Format, is_custom_speech: bool, endpoint_id: &str) -> String {
+        let language = match mode {
+            Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
+            Mode::Conversation(language) => language.to_string(),
+        };
+        if is_custom_speech {
+            format!(
+                "wss://westus.stt.speech.microsoft.com/speech/recognition/{}/cognitiveservices/v1?cid={}&language={}&format={}",
+                mode,
+                endpoint_id,
+                language,
+                format
+            )
+        } else {
+            format!(
+                "wss://speech.platform.bing.com/speech/recognition/{}/cognitiveservices/v1?language={}&format={}",
+                mode,
+                language,
+                format
+            )
+        }
+    }
 }
 
 impl MyHandler {
@@ -271,31 +228,33 @@ impl MyHandler {
             let key = kv[0].trim();
             let value = kv[1].trim();
             if key == "Path" {
-                let event = match value {
-                    "turn.start" => ServerEvent::TurnStart,
-                    "turn.end" => ServerEvent::TurnEnd,
-                    "speech.startDetected" => ServerEvent::SpeechStartDetected,
+                let h = self.handler.clone();
+                let mut h = h.lock().unwrap();
+                match value {
+                    "turn.start" => {
+                        h.on_turn_start();
+                    },
+                    "turn.end" => {
+                        *self.audio_uuid.lock().unwrap() = None;
+                        h.on_turn_end();
+                    },
+                    "speech.startDetected" => {
+                        h.on_speech_start();
+                    },
+                    "speech.endDetected" => {
+                        h.on_speech_end();
+                    },
                     "speech.hypothesis" => {
                         let json = serde_json::from_slice(body.as_bytes()).unwrap();
-                        ServerEvent::SpeechHypothesis(json)
+                        h.on_speech_hypothesis(json);
                     }
                     "speech.phrase" => {
                         let value: serde_json::Value = serde_json::from_str(body).unwrap();
-                        ServerEvent::SpeechPhrase(Phrase::from_json_value(&value).unwrap())
+                        let phrase = Phrase::from_json_value(&value).unwrap();
+                        h.on_speech_phrase(phrase);
                     }
-                    "speech.endDetected" => ServerEvent::SpeechEndDetected,
-                    _ => ServerEvent::Unknown,
+                    _ => {},
                 };
-
-                if let Some(ref tx) = self.server_event_from_handler_tx {
-                    tx.send(event.clone()).unwrap();
-                }
-
-                if let Ok(guard) = self.server_event_tx.lock() {
-                    if let Some(ref server_event_tx) = *guard {
-                        server_event_tx.send(event).unwrap();
-                    }
-                }
             }
         }
 
@@ -305,10 +264,11 @@ impl MyHandler {
 
 impl ws::Handler for MyHandler {
     fn build_request(&mut self, url: &Url) -> ws::Result<ws::Request> {
+        info!("Building request");
         let mut request = ws::Request::from_url(url)?;
         {
             let headers = request.headers_mut();
-            let token = format!("Bearer {}", &self.token.lock().unwrap())
+            let token = format!("Bearer {}", self.token.lock().unwrap())
                 .as_bytes()
                 .to_vec();
             let connection_id = Uuid::new_v4()
@@ -328,59 +288,17 @@ impl ws::Handler for MyHandler {
     }
 
     fn on_message(&mut self, msg: ws::Message) -> ws::Result<()> {
+        info!("Got message");
         self.parse_server_message(msg)?;
         Ok(())
     }
 
     fn on_close(&mut self, _code: ws::CloseCode, _reason: &str) {
-        if let Ok(guard) = self.server_event_tx.lock() {
-            if let Some(ref server_event_tx) = *guard {
-                if let Err(err) = server_event_tx.send(ServerEvent::Disconnect) {
-                    error!(target: "on_close()", "{}", err);
-                }
-            }
-        }
-
         info!("Disconnected");
     }
 
     fn on_error(&mut self, err: ws::Error) {
         error!("{}", err);
-    }
-}
-
-struct MyFactory {
-    sender: Arc<Mutex<Option<ws::Sender>>>,
-    token: Arc<Mutex<String>>,
-    server_event_tx: Arc<Mutex<Option<Sender<ServerEvent>>>>,
-    server_event_from_handler_tx: Option<Sender<ServerEvent>>,
-}
-
-impl ws::Factory for MyFactory {
-    type Handler = MyHandler;
-
-    fn connection_made(&mut self, sender: ws::Sender) -> MyHandler {
-        if let Ok(mut sender_guard) = self.sender.lock() {
-            *sender_guard = Some(sender);
-        }
-
-        MyHandler {
-            token: self.token.clone(),
-            server_event_tx: self.server_event_tx.clone(),
-            server_event_from_handler_tx: self.server_event_from_handler_tx.clone(),
-        }
-    }
-
-    fn client_connected(&mut self, sender: ws::Sender) -> MyHandler {
-        if let Ok(mut sender_guard) = self.sender.lock() {
-            *sender_guard = Some(sender);
-        }
-
-        MyHandler {
-            token: self.token.clone(),
-            server_event_tx: self.server_event_tx.clone(),
-            server_event_from_handler_tx: self.server_event_from_handler_tx.clone(),
-        }
     }
 }
 
