@@ -200,6 +200,7 @@ pub unsafe extern "C" fn bing_speech_new(subscription_key: *mut c_char) -> *mut 
         handle: Speech::new(&subscription_key).unwrap(),
     });
 
+    mem::forget(subscription_key);
     Box::into_raw(bing_speech)
 }
 
@@ -225,6 +226,7 @@ pub unsafe extern "C" fn bing_speech_set_endpoint_id(
 ) {
     let endpoint_id = CString::from_raw(endpoint_id).into_string().unwrap();
     (*bing_speech).handle.set_endpoint_id(&endpoint_id);
+    mem::forget(endpoint_id);
 }
 
 #[no_mangle]
@@ -239,6 +241,20 @@ pub unsafe extern "C" fn bing_speech_fetch_token(bing_speech: *mut BingSpeech) -
 #[no_mangle]
 pub unsafe extern "C" fn bing_speech_auto_fetch_token(bing_speech: *mut BingSpeech) {
     (*bing_speech).handle.auto_fetch_token();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn bing_speech_synthesize(bing_speech: *mut BingSpeech, c_text: *mut c_char, c_font: c_int, c_output: *mut *mut c_void, c_output_len: *mut c_int) {
+    let text = CString::from_raw(c_text).into_string().unwrap();
+    if let Ok((_, _, Some(mut data))) = (*bing_speech).handle.synthesize(&text, font_from_c(c_font)) {
+        *c_output_len = data.len() as i32;
+        *c_output = data.as_mut_ptr() as *mut c_void;
+        mem::forget(data);
+    } else {
+        *c_output_len = 0;
+        *c_output = ptr::null_mut();
+    }
+    mem::forget(text);
 }
 
 #[no_mangle]
@@ -282,6 +298,7 @@ pub unsafe extern "C" fn bing_speech_websocket_connect(
             c_handler: Arc::new(Mutex::new(handler)),
         })),
     );
+    mem::forget(endpoint_id);
 
     match result {
         Ok(_) => 0,
@@ -334,6 +351,8 @@ pub unsafe extern "C" fn bing_speech_websocket_audio(
 
         i = j;
     }
+
+    mem::forget(audio);
 
     0
 }
@@ -615,4 +634,8 @@ fn format_from_c(c_format: c_int) -> Format {
         0 => Format::Simple,
         _ => Format::Detailed,
     }
+}
+
+fn font_from_c(c_font: c_int) -> &'static voice::Font {
+    voice::en_us::JESSA_RUS
 }
