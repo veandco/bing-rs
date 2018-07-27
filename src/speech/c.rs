@@ -325,6 +325,13 @@ pub unsafe extern "C" fn bing_speech_websocket_disconnect(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn bing_speech_websocket_free(
+    c_websocket: *mut BingSpeechWebsocket,
+) {
+    Box::from_raw(c_websocket);
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn bing_speech_websocket_audio(
     handle: *mut BingSpeechWebsocket,
     audio: *mut u8,
@@ -637,5 +644,82 @@ fn format_from_c(c_format: c_int) -> Format {
 }
 
 fn font_from_c(c_font: c_int) -> &'static voice::Font {
-    voice::en_us::JESSA_RUS
+    match c_font {
+        0 => voice::ar_eg::HODA,
+        1 => voice::ar_sa::NAAYF,
+        2 => voice::bg_bg::IVAN,
+        3 => voice::ca_es::HERENA_RUS,
+        4 => voice::ca_cz::JAKUB,
+        5 => voice::da_dk::HELLE_RUS,
+        6 => voice::de_at::MICHAEL,
+        7 => voice::de_ch::KARSTEN,
+        8 => voice::de_de::HEDDA,
+        9 => voice::de_de::HEDDA_RUS,
+        10 => voice::de_de::STEFAN_APOLLO,
+        11 => voice::el_gr::STEFANOS,
+        12 => voice::en_au::CATHERINE,
+        13 => voice::en_au::HAYLEY_RUS,
+        14 => voice::en_ca::LINDA,
+        15 => voice::en_ca::HEATHER_RUS,
+        16 => voice::en_gb::SUSAN_APOLLO,
+        17 => voice::en_gb::HAZEL_RUS,
+        18 => voice::en_gb::GEORGE_APOLLO,
+        19 => voice::en_ie::SEAN,
+        20 => voice::en_in::HEERA_APOLLO,
+        21 => voice::en_in::PRIYA_RUS,
+        22 => voice::en_in::RAVI_APOLLO,
+        23 => voice::en_us::ZIRA_RUS,
+        24 => voice::en_us::JESSA_RUS,
+        25 => voice::en_us::BENJAMIN_RUS,
+        26 => voice::es_es::LAURA_APOLLO,
+        27 => voice::es_es::HELENA_RUS,
+        28 => voice::es_es::PABLO_APOLLO,
+        29 => voice::es_mx::HILDA_RUS,
+        30 => voice::es_mx::RAUL_APOLLO,
+        31 => voice::fi_fi::HEIDI_RUS,
+        32 => voice::fr_ca::CAROLINE,
+        33 => voice::fr_ca::HARMONIE_RUS,
+        34 => voice::fr_ch::GUILLAUME,
+        35 => voice::fr_fr::JULIE_APOLLO,
+        36 => voice::fr_fr::HORTENSE_RUS,
+        37 => voice::fr_fr::PAUL_APOLLO,
+        38 => voice::he_il::ASAF,
+        39 => voice::hi_in::KALPANA_APOLLO,
+        40 => voice::hi_in::KALPANA,
+        41 => voice::hi_in::HEMANT,
+        42 => voice::hr_hr::MATEJ,
+        43 => voice::hu_hu::SZABOLCS,
+        44 => voice::id_id::ANDIKA,
+        45 => voice::it_it::COSIMA_APOLLO,
+        46 => voice::ja_jp::AYUMI_APOLLO,
+        47 => voice::ja_jp::ICHIRO_APOLLO,
+        48 => voice::ja_jp::HARUKA_RUS,
+        49 => voice::ja_jp::LUCIA_RUS,
+        50 => voice::ja_jp::EKATERINA_RUS,
+        51 => voice::ko_kr::HEAMI_RUS,
+        52 => voice::ms_my::RIZWAN,
+        53 => voice::nb_no::HULDA_RUS,
+        54 => voice::nl_nl::HANNA_RUS,
+        55 => voice::pt_br::HELOISA_RUS,
+        56 => voice::pt_br::DANIEL_APOLLO,
+        57 => voice::ro_ro::ANDREI,
+        58 => voice::ru_ru::IRINA_APOLLO,
+        59 => voice::ru_ru::PAVEL_APOLLO,
+        60 => voice::sk_sk::FILIP,
+        61 => voice::sv_se::HEDVIG_RUS,
+        62 => voice::ta_in::VALLUVAR,
+        63 => voice::th_th::PATTARA,
+        64 => voice::tr_tr::SEDA_RUS,
+        65 => voice::vi_vn::AN,
+        66 => voice::zh_cn::HUIHUI_RUS,
+        67 => voice::zh_cn::YAOYAO_APOLLO,
+        68 => voice::zh_cn::KANGKANG_APOLLO,
+        69 => voice::zh_hk::TRACY_APOLLO,
+        70 => voice::zh_hk::TRACY_RUS,
+        71 => voice::zh_hk::DANNY_APOLLO,
+        72 => voice::zh_tw::YATING_APOLLO,
+        73 => voice::zh_tw::HANHAN_RUS,
+        74 => voice::zh_tw::ZHIWEI_APOLLO,
+        _ => voice::en_us::JESSA_RUS,
+    }
 }

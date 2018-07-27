@@ -113,7 +113,7 @@ pub mod en_au {
         "Microsoft Server Speech Text to Speech Voice (en-AU, Catherine)"
     });
 
-    font!(HAYLEYRUS {
+    font!(HAYLEY_RUS {
         "en-AU",
         "Female",
         "Microsoft Server Speech Text to Speech Voice (en-AU, HayleyRUS)"
