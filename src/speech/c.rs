@@ -5,8 +5,8 @@ use std::os::raw::{c_char, c_double, c_int, c_void};
 use std::ptr;
 use std::sync::{Arc, Mutex};
 
-use speech::*;
 use speech::websocket::*;
+use speech::*;
 
 #[no_mangle]
 #[repr(C)]
@@ -171,14 +171,14 @@ impl Handler for BingSpeechHandler {
                 };
                 mem::forget(nbest);
                 phrase
-            },
+            }
             Phrase::Silence(silence) => BingSpeechPhrase {
-                    recognition_status: to_c_string(&silence.recognition_status),
-                    display_text: ptr::null_mut(),
-                    offset: silence.offset,
-                    duration: silence.duration,
-                    nbest: ptr::null_mut(),
-                    nbest_count: 0,
+                recognition_status: to_c_string(&silence.recognition_status),
+                display_text: ptr::null_mut(),
+                offset: silence.offset,
+                duration: silence.duration,
+                nbest: ptr::null_mut(),
+                nbest_count: 0,
             },
             Phrase::Unknown => BingSpeechPhrase {
                 recognition_status: to_c_string("Unknown"),
@@ -187,7 +187,7 @@ impl Handler for BingSpeechHandler {
                 duration: 0.0,
                 nbest: ptr::null_mut(),
                 nbest_count: 0,
-            }
+            },
         };
         f(phrase);
     }
@@ -265,12 +265,11 @@ pub unsafe extern "C" fn bing_speech_websocket_connect(
     }
     let format = format_from_c(c_format);
     let is_custom_speech = c_is_custom_speech > 0;
-    let endpoint_id =
-        if is_custom_speech {
-            CString::from_raw(c_endpoint_id).into_string().unwrap()
-        } else {
-            "".to_string()
-        };
+    let endpoint_id = if is_custom_speech {
+        CString::from_raw(c_endpoint_id).into_string().unwrap()
+    } else {
+        "".to_string()
+    };
 
     // Connect to Websocket
     let result = (*c_websocket).handle.connect(
@@ -278,10 +277,10 @@ pub unsafe extern "C" fn bing_speech_websocket_connect(
         &mode,
         &format,
         is_custom_speech,
-        &endpoint_id, 
+        &endpoint_id,
         Arc::new(Mutex::new(BingSpeechHandler {
             c_handler: Arc::new(Mutex::new(handler)),
-        }))
+        })),
     );
 
     match result {
@@ -289,13 +288,13 @@ pub unsafe extern "C" fn bing_speech_websocket_connect(
         Err(err) => {
             error!("{}", err);
             1
-        },
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn bing_speech_websocket_disconnect(
-    c_websocket: *mut BingSpeechWebsocket
+    c_websocket: *mut BingSpeechWebsocket,
 ) -> c_int {
     let result = (*c_websocket).handle.disconnect();
 
@@ -304,7 +303,7 @@ pub unsafe extern "C" fn bing_speech_websocket_disconnect(
         Err(err) => {
             error!("{}", err);
             1
-        },
+        }
     }
 }
 
@@ -320,17 +319,14 @@ pub unsafe extern "C" fn bing_speech_websocket_audio(
     let mut i = 0;
 
     while i < audio_size {
-        let j =
-            if audio_size - i < BUFFER_SIZE {
-                audio_size
-            } else {
-                i + BUFFER_SIZE
-            };
+        let j = if audio_size - i < BUFFER_SIZE {
+            audio_size
+        } else {
+            i + BUFFER_SIZE
+        };
 
         // Send audio data to Bing Speech
-        let result = (*handle)
-            .handle
-            .audio(&audio[i..j].to_vec());
+        let result = (*handle).handle.audio(&audio[i..j].to_vec());
         if let Err(err) = result {
             error!("{}", err);
             return 2;
@@ -345,83 +341,272 @@ pub unsafe extern "C" fn bing_speech_websocket_audio(
 fn mode_from_c(c_mode: c_int, c_language: c_int) -> (Mode, c_int) {
     match c_mode {
         0 => match c_language {
-            0  => (Mode::Interactive(InteractiveDictationLanguage::ArabicEgypt), 0),
-            1  => (Mode::Interactive(InteractiveDictationLanguage::CatalanSpain), 0),
-            2  => (Mode::Interactive(InteractiveDictationLanguage::ChineseChina), 0),
-            3  => (Mode::Interactive(InteractiveDictationLanguage::ChineseHongKong), 0),
-            4  => (Mode::Interactive(InteractiveDictationLanguage::ChineseTaiwan), 0),
-            5  => (Mode::Interactive(InteractiveDictationLanguage::DanishDenmark), 0),
-            6  => (Mode::Interactive(InteractiveDictationLanguage::DutchNetherlands), 0),
-            7  => (Mode::Interactive(InteractiveDictationLanguage::EnglishAustralia), 0),
-            8  => (Mode::Interactive(InteractiveDictationLanguage::EnglishCanada), 0),
-            9  => (Mode::Interactive(InteractiveDictationLanguage::EnglishIndia), 0),
-            10 => (Mode::Interactive(InteractiveDictationLanguage::EnglishNewZealand), 0),
-            11 => (Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedKingdom), 0),
-            12 => (Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), 0),
-            13 => (Mode::Interactive(InteractiveDictationLanguage::FinnishFinland), 0),
-            14 => (Mode::Interactive(InteractiveDictationLanguage::FrenchCanada), 0),
-            15 => (Mode::Interactive(InteractiveDictationLanguage::FrenchFrance), 0),
-            16 => (Mode::Interactive(InteractiveDictationLanguage::GermanGermany), 0),
-            17 => (Mode::Interactive(InteractiveDictationLanguage::HindiIndia), 0),
-            18 => (Mode::Interactive(InteractiveDictationLanguage::ItalianItaly), 0),
-            19 => (Mode::Interactive(InteractiveDictationLanguage::JapaneseJapan), 0),
-            20 => (Mode::Interactive(InteractiveDictationLanguage::KoreanKorea), 0),
-            21 => (Mode::Interactive(InteractiveDictationLanguage::NorwegianNorway), 0),
-            22 => (Mode::Interactive(InteractiveDictationLanguage::PolishPoland), 0),
-            23 => (Mode::Interactive(InteractiveDictationLanguage::PortugueseBrazil), 0),
-            24 => (Mode::Interactive(InteractiveDictationLanguage::PortuguesePortugal), 0),
-            25 => (Mode::Interactive(InteractiveDictationLanguage::RussianRussia), 0),
-            26 => (Mode::Interactive(InteractiveDictationLanguage::SpanishMexico), 0),
-            27 => (Mode::Interactive(InteractiveDictationLanguage::SpanishSpain), 0),
-            28 => (Mode::Interactive(InteractiveDictationLanguage::SwedishSweden), 0),
-            _  => (Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), 1),
+            0 => (
+                Mode::Interactive(InteractiveDictationLanguage::ArabicEgypt),
+                0,
+            ),
+            1 => (
+                Mode::Interactive(InteractiveDictationLanguage::CatalanSpain),
+                0,
+            ),
+            2 => (
+                Mode::Interactive(InteractiveDictationLanguage::ChineseChina),
+                0,
+            ),
+            3 => (
+                Mode::Interactive(InteractiveDictationLanguage::ChineseHongKong),
+                0,
+            ),
+            4 => (
+                Mode::Interactive(InteractiveDictationLanguage::ChineseTaiwan),
+                0,
+            ),
+            5 => (
+                Mode::Interactive(InteractiveDictationLanguage::DanishDenmark),
+                0,
+            ),
+            6 => (
+                Mode::Interactive(InteractiveDictationLanguage::DutchNetherlands),
+                0,
+            ),
+            7 => (
+                Mode::Interactive(InteractiveDictationLanguage::EnglishAustralia),
+                0,
+            ),
+            8 => (
+                Mode::Interactive(InteractiveDictationLanguage::EnglishCanada),
+                0,
+            ),
+            9 => (
+                Mode::Interactive(InteractiveDictationLanguage::EnglishIndia),
+                0,
+            ),
+            10 => (
+                Mode::Interactive(InteractiveDictationLanguage::EnglishNewZealand),
+                0,
+            ),
+            11 => (
+                Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedKingdom),
+                0,
+            ),
+            12 => (
+                Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates),
+                0,
+            ),
+            13 => (
+                Mode::Interactive(InteractiveDictationLanguage::FinnishFinland),
+                0,
+            ),
+            14 => (
+                Mode::Interactive(InteractiveDictationLanguage::FrenchCanada),
+                0,
+            ),
+            15 => (
+                Mode::Interactive(InteractiveDictationLanguage::FrenchFrance),
+                0,
+            ),
+            16 => (
+                Mode::Interactive(InteractiveDictationLanguage::GermanGermany),
+                0,
+            ),
+            17 => (
+                Mode::Interactive(InteractiveDictationLanguage::HindiIndia),
+                0,
+            ),
+            18 => (
+                Mode::Interactive(InteractiveDictationLanguage::ItalianItaly),
+                0,
+            ),
+            19 => (
+                Mode::Interactive(InteractiveDictationLanguage::JapaneseJapan),
+                0,
+            ),
+            20 => (
+                Mode::Interactive(InteractiveDictationLanguage::KoreanKorea),
+                0,
+            ),
+            21 => (
+                Mode::Interactive(InteractiveDictationLanguage::NorwegianNorway),
+                0,
+            ),
+            22 => (
+                Mode::Interactive(InteractiveDictationLanguage::PolishPoland),
+                0,
+            ),
+            23 => (
+                Mode::Interactive(InteractiveDictationLanguage::PortugueseBrazil),
+                0,
+            ),
+            24 => (
+                Mode::Interactive(InteractiveDictationLanguage::PortuguesePortugal),
+                0,
+            ),
+            25 => (
+                Mode::Interactive(InteractiveDictationLanguage::RussianRussia),
+                0,
+            ),
+            26 => (
+                Mode::Interactive(InteractiveDictationLanguage::SpanishMexico),
+                0,
+            ),
+            27 => (
+                Mode::Interactive(InteractiveDictationLanguage::SpanishSpain),
+                0,
+            ),
+            28 => (
+                Mode::Interactive(InteractiveDictationLanguage::SwedishSweden),
+                0,
+            ),
+            _ => (
+                Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates),
+                1,
+            ),
         },
         1 => match c_language {
-            0  => (Mode::Dictation(InteractiveDictationLanguage::ArabicEgypt), 0),
-            1  => (Mode::Dictation(InteractiveDictationLanguage::CatalanSpain), 0),
-            2  => (Mode::Dictation(InteractiveDictationLanguage::ChineseChina), 0),
-            3  => (Mode::Dictation(InteractiveDictationLanguage::ChineseHongKong), 0),
-            4  => (Mode::Dictation(InteractiveDictationLanguage::ChineseTaiwan), 0),
-            5  => (Mode::Dictation(InteractiveDictationLanguage::DanishDenmark), 0),
-            6  => (Mode::Dictation(InteractiveDictationLanguage::DutchNetherlands), 0),
-            7  => (Mode::Dictation(InteractiveDictationLanguage::EnglishAustralia), 0),
-            8  => (Mode::Dictation(InteractiveDictationLanguage::EnglishCanada), 0),
-            9  => (Mode::Dictation(InteractiveDictationLanguage::EnglishIndia), 0),
-            10 => (Mode::Dictation(InteractiveDictationLanguage::EnglishNewZealand), 0),
-            11 => (Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedKingdom), 0),
-            12 => (Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedStates), 0),
-            13 => (Mode::Dictation(InteractiveDictationLanguage::FinnishFinland), 0),
-            14 => (Mode::Dictation(InteractiveDictationLanguage::FrenchCanada), 0),
-            15 => (Mode::Dictation(InteractiveDictationLanguage::FrenchFrance), 0),
-            16 => (Mode::Dictation(InteractiveDictationLanguage::GermanGermany), 0),
+            0 => (
+                Mode::Dictation(InteractiveDictationLanguage::ArabicEgypt),
+                0,
+            ),
+            1 => (
+                Mode::Dictation(InteractiveDictationLanguage::CatalanSpain),
+                0,
+            ),
+            2 => (
+                Mode::Dictation(InteractiveDictationLanguage::ChineseChina),
+                0,
+            ),
+            3 => (
+                Mode::Dictation(InteractiveDictationLanguage::ChineseHongKong),
+                0,
+            ),
+            4 => (
+                Mode::Dictation(InteractiveDictationLanguage::ChineseTaiwan),
+                0,
+            ),
+            5 => (
+                Mode::Dictation(InteractiveDictationLanguage::DanishDenmark),
+                0,
+            ),
+            6 => (
+                Mode::Dictation(InteractiveDictationLanguage::DutchNetherlands),
+                0,
+            ),
+            7 => (
+                Mode::Dictation(InteractiveDictationLanguage::EnglishAustralia),
+                0,
+            ),
+            8 => (
+                Mode::Dictation(InteractiveDictationLanguage::EnglishCanada),
+                0,
+            ),
+            9 => (
+                Mode::Dictation(InteractiveDictationLanguage::EnglishIndia),
+                0,
+            ),
+            10 => (
+                Mode::Dictation(InteractiveDictationLanguage::EnglishNewZealand),
+                0,
+            ),
+            11 => (
+                Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedKingdom),
+                0,
+            ),
+            12 => (
+                Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedStates),
+                0,
+            ),
+            13 => (
+                Mode::Dictation(InteractiveDictationLanguage::FinnishFinland),
+                0,
+            ),
+            14 => (
+                Mode::Dictation(InteractiveDictationLanguage::FrenchCanada),
+                0,
+            ),
+            15 => (
+                Mode::Dictation(InteractiveDictationLanguage::FrenchFrance),
+                0,
+            ),
+            16 => (
+                Mode::Dictation(InteractiveDictationLanguage::GermanGermany),
+                0,
+            ),
             17 => (Mode::Dictation(InteractiveDictationLanguage::HindiIndia), 0),
-            18 => (Mode::Dictation(InteractiveDictationLanguage::ItalianItaly), 0),
-            19 => (Mode::Dictation(InteractiveDictationLanguage::JapaneseJapan), 0),
-            20 => (Mode::Dictation(InteractiveDictationLanguage::KoreanKorea), 0),
-            21 => (Mode::Dictation(InteractiveDictationLanguage::NorwegianNorway), 0),
-            22 => (Mode::Dictation(InteractiveDictationLanguage::PolishPoland), 0),
-            23 => (Mode::Dictation(InteractiveDictationLanguage::PortugueseBrazil), 0),
-            24 => (Mode::Dictation(InteractiveDictationLanguage::PortuguesePortugal), 0),
-            25 => (Mode::Dictation(InteractiveDictationLanguage::RussianRussia), 0),
-            26 => (Mode::Dictation(InteractiveDictationLanguage::SpanishMexico), 0),
-            27 => (Mode::Dictation(InteractiveDictationLanguage::SpanishSpain), 0),
-            28 => (Mode::Dictation(InteractiveDictationLanguage::SwedishSweden), 0),
-            _  => (Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedStates), 1),
+            18 => (
+                Mode::Dictation(InteractiveDictationLanguage::ItalianItaly),
+                0,
+            ),
+            19 => (
+                Mode::Dictation(InteractiveDictationLanguage::JapaneseJapan),
+                0,
+            ),
+            20 => (
+                Mode::Dictation(InteractiveDictationLanguage::KoreanKorea),
+                0,
+            ),
+            21 => (
+                Mode::Dictation(InteractiveDictationLanguage::NorwegianNorway),
+                0,
+            ),
+            22 => (
+                Mode::Dictation(InteractiveDictationLanguage::PolishPoland),
+                0,
+            ),
+            23 => (
+                Mode::Dictation(InteractiveDictationLanguage::PortugueseBrazil),
+                0,
+            ),
+            24 => (
+                Mode::Dictation(InteractiveDictationLanguage::PortuguesePortugal),
+                0,
+            ),
+            25 => (
+                Mode::Dictation(InteractiveDictationLanguage::RussianRussia),
+                0,
+            ),
+            26 => (
+                Mode::Dictation(InteractiveDictationLanguage::SpanishMexico),
+                0,
+            ),
+            27 => (
+                Mode::Dictation(InteractiveDictationLanguage::SpanishSpain),
+                0,
+            ),
+            28 => (
+                Mode::Dictation(InteractiveDictationLanguage::SwedishSweden),
+                0,
+            ),
+            _ => (
+                Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedStates),
+                1,
+            ),
         },
         2 => match c_language {
-            0  => (Mode::Conversation(ConversationLanguage::ArabicEgypt), 0),
-            1  => (Mode::Conversation(ConversationLanguage::ChineseChina), 0),
-            2  => (Mode::Conversation(ConversationLanguage::EnglishUnitedStates), 0),
-            3  => (Mode::Conversation(ConversationLanguage::FrenchFrance), 0),
-            4  => (Mode::Conversation(ConversationLanguage::GermanGermany), 0),
-            5  => (Mode::Conversation(ConversationLanguage::ItalianItaly), 0),
-            6  => (Mode::Conversation(ConversationLanguage::JapaneseJapan), 0),
-            7  => (Mode::Conversation(ConversationLanguage::PortugueseBrazil), 0),
-            8  => (Mode::Conversation(ConversationLanguage::RussianRussia), 0),
-            9  => (Mode::Conversation(ConversationLanguage::SpanishSpain), 0),
-            _  => (Mode::Conversation(ConversationLanguage::EnglishUnitedStates), 1),
+            0 => (Mode::Conversation(ConversationLanguage::ArabicEgypt), 0),
+            1 => (Mode::Conversation(ConversationLanguage::ChineseChina), 0),
+            2 => (
+                Mode::Conversation(ConversationLanguage::EnglishUnitedStates),
+                0,
+            ),
+            3 => (Mode::Conversation(ConversationLanguage::FrenchFrance), 0),
+            4 => (Mode::Conversation(ConversationLanguage::GermanGermany), 0),
+            5 => (Mode::Conversation(ConversationLanguage::ItalianItaly), 0),
+            6 => (Mode::Conversation(ConversationLanguage::JapaneseJapan), 0),
+            7 => (
+                Mode::Conversation(ConversationLanguage::PortugueseBrazil),
+                0,
+            ),
+            8 => (Mode::Conversation(ConversationLanguage::RussianRussia), 0),
+            9 => (Mode::Conversation(ConversationLanguage::SpanishSpain), 0),
+            _ => (
+                Mode::Conversation(ConversationLanguage::EnglishUnitedStates),
+                1,
+            ),
         },
-        _ => (Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), 0),
+        _ => (
+            Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates),
+            0,
+        ),
     }
 }
 

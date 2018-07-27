@@ -147,7 +147,8 @@ impl Speech {
                 "https://westus.api.cognitive.microsoft.com/sts/v1.0/issueToken"
             } else {
                 "https://api.cognitive.microsoft.com/sts/v1.0/issueToken"
-            }.parse().unwrap();
+            }.parse()
+                .unwrap();
 
             let request = Request::builder()
                 .method(Method::POST)

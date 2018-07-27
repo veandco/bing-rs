@@ -82,9 +82,10 @@ fn main() {
     // Setup Bing Speech Websocket
     let mode = Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates);
     let format = Format::Detailed;
-    let handler = Arc::new(Mutex::new(MyHandler{}));
+    let handler = Arc::new(Mutex::new(MyHandler {}));
     let mut ws = Websocket::new();
-    ws.connect(token.clone(), &mode, &format, false, "", handler.clone()).unwrap();
+    ws.connect(token.clone(), &mode, &format, false, "", handler.clone())
+        .unwrap();
 
     // Send audio data
     let running_1 = running.clone();

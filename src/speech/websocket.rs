@@ -57,7 +57,7 @@ impl ws::Factory for Factory {
     fn connection_made(&mut self, sender: ws::Sender) -> MyHandler {
         *self.sender.lock().unwrap() = Some(sender);
 
-        MyHandler{
+        MyHandler {
             token: self.token.clone(),
             handler: self.handler.clone(),
             audio_uuid: self.audio_uuid.clone(),
@@ -67,7 +67,7 @@ impl ws::Factory for Factory {
     fn client_connected(&mut self, sender: ws::Sender) -> MyHandler {
         *self.sender.lock().unwrap() = Some(sender);
 
-        MyHandler{
+        MyHandler {
             token: self.token.clone(),
             handler: self.handler.clone(),
             audio_uuid: self.audio_uuid.clone(),
@@ -80,10 +80,7 @@ impl Websocket {
         let sender = Arc::new(Mutex::new(None));
         let audio_uuid = Arc::new(Mutex::new(None));
 
-        Websocket{
-            sender,
-            audio_uuid,
-        }
+        Websocket { sender, audio_uuid }
     }
 
     /// Open the Websocket connection
@@ -97,7 +94,7 @@ impl Websocket {
         handler: Arc<Mutex<Handler + Send + Sync>>,
     ) -> Result<()> {
         // Create new WebSocket instance
-        let mut ws = ws::WebSocket::new(Factory{
+        let mut ws = ws::WebSocket::new(Factory {
             sender: self.sender.clone(),
             token: token.clone(),
             handler: handler.clone(),
@@ -181,7 +178,12 @@ impl Websocket {
         }
     }
 
-    fn build_url(mode: &Mode, format: &Format, is_custom_speech: bool, endpoint_id: &str) -> String {
+    fn build_url(
+        mode: &Mode,
+        format: &Format,
+        is_custom_speech: bool,
+        endpoint_id: &str,
+    ) -> String {
         let language = match mode {
             Mode::Interactive(language) | Mode::Dictation(language) => language.to_string(),
             Mode::Conversation(language) => language.to_string(),
@@ -233,17 +235,17 @@ impl MyHandler {
                 match value {
                     "turn.start" => {
                         h.on_turn_start();
-                    },
+                    }
                     "turn.end" => {
                         *self.audio_uuid.lock().unwrap() = None;
                         h.on_turn_end();
-                    },
+                    }
                     "speech.startDetected" => {
                         h.on_speech_start();
-                    },
+                    }
                     "speech.endDetected" => {
                         h.on_speech_end();
-                    },
+                    }
                     "speech.hypothesis" => {
                         let json = serde_json::from_slice(body.as_bytes()).unwrap();
                         h.on_speech_hypothesis(json);
@@ -253,7 +255,7 @@ impl MyHandler {
                         let phrase = Phrase::from_json_value(&value).unwrap();
                         h.on_speech_phrase(phrase);
                     }
-                    _ => {},
+                    _ => {}
                 };
             }
         }
