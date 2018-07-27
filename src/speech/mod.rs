@@ -17,7 +17,7 @@ type HttpsConnector = hyper_tls::HttpsConnector<hyper::client::HttpConnector>;
 use serde_json;
 
 // internal
-//pub mod c;
+pub mod c;
 pub mod websocket;
 use self::websocket::*;
 use errors::*;

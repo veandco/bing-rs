@@ -5,11 +5,8 @@ use std::os::raw::{c_char, c_double, c_int, c_void};
 use std::ptr;
 use std::sync::{Arc, Mutex};
 
-use speech::{
-    DetailedPhraseItem, Format, Hypothesis,
-    InteractiveDictationLanguage, Mode, Phrase, Speech,
-    Websocket
-};
+use speech::*;
+use speech::websocket::*;
 
 #[no_mangle]
 #[repr(C)]
@@ -28,8 +25,8 @@ pub struct BingSpeechWebsocket {
 pub struct BingSpeechWebsocketHandler {
     on_turn_start: *mut c_void,
     on_turn_end: *mut c_void,
-    on_speech_start_detected: *mut c_void,
-    on_speech_end_detected: *mut c_void,
+    on_speech_start: *mut c_void,
+    on_speech_end: *mut c_void,
     on_speech_hypothesis: *mut c_void,
     on_speech_phrase: *mut c_void,
 }
@@ -109,23 +106,23 @@ impl Handler for BingSpeechHandler {
         f();
     }
 
-    fn on_speech_start_detected(&mut self) {
+    fn on_speech_start(&mut self) {
         let handler = self.c_handler.lock().unwrap();
-        if handler.on_speech_start_detected.is_null() {
+        if handler.on_speech_start.is_null() {
             return;
         }
 
-        let f: extern "C" fn() = unsafe { mem::transmute(handler.on_speech_start_detected) };
+        let f: extern "C" fn() = unsafe { mem::transmute(handler.on_speech_start) };
         f();
     }
 
-    fn on_speech_end_detected(&mut self) {
+    fn on_speech_end(&mut self) {
         let handler = self.c_handler.lock().unwrap();
-        if handler.on_speech_end_detected.is_null() {
+        if handler.on_speech_end.is_null() {
             return;
         }
 
-        let f: extern "C" fn() = unsafe { mem::transmute(handler.on_speech_end_detected) };
+        let f: extern "C" fn() = unsafe { mem::transmute(handler.on_speech_end) };
         f();
     }
 
@@ -233,33 +230,82 @@ pub unsafe extern "C" fn bing_speech_set_endpoint_id(
 #[no_mangle]
 pub unsafe extern "C" fn bing_speech_fetch_token(bing_speech: *mut BingSpeech) -> *mut c_char {
     let result = (*bing_speech).handle.fetch_token();
-    if let Ok((_, _, Some(token))) = result {
-        to_c_string(&token)
-    } else {
-        ptr::null_mut()
+    match result {
+        Ok((_, _, Some(token))) => to_c_string(&token),
+        _ => ptr::null_mut(),
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn bing_speech_websocket(
-    bing_speech: *mut BingSpeech,
+pub unsafe extern "C" fn bing_speech_auto_fetch_token(bing_speech: *mut BingSpeech) {
+    (*bing_speech).handle.auto_fetch_token();
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn bing_speech_websocket_new() -> *mut BingSpeechWebsocket {
+    let handle = Websocket::new();
+    let websocket = Box::new(BingSpeechWebsocket { handle });
+    Box::into_raw(websocket)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn bing_speech_websocket_connect(
+    c_speech: *mut BingSpeech,
+    c_websocket: *mut BingSpeechWebsocket,
+    c_mode: c_int,
+    c_language: c_int,
+    c_format: c_int,
+    c_is_custom_speech: c_int,
+    c_endpoint_id: *mut c_char,
     handler: BingSpeechWebsocketHandler,
-) -> *mut BingSpeechWebsocket {
-    let mode = Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates);
-    let handle = (*bing_speech)
-        .handle
-        .websocket(
-            &mode,
-            Format::Detailed,
-            Arc::new(Mutex::new(BingSpeechHandler {
-                c_handler: Arc::new(Mutex::new(handler)),
-            })),
-        )
-        .unwrap();
+) -> c_int {
+    let (mode, ok) = mode_from_c(c_mode, c_language);
+    if ok != 0 {
+        return ok;
+    }
+    let format = format_from_c(c_format);
+    let is_custom_speech = c_is_custom_speech > 0;
+    let endpoint_id =
+        if is_custom_speech {
+            CString::from_raw(c_endpoint_id).into_string().unwrap()
+        } else {
+            "".to_string()
+        };
 
-    let handle = Box::new(BingSpeechWebsocket { handle });
+    // Connect to Websocket
+    let result = (*c_websocket).handle.connect(
+        (*c_speech).handle.token.clone(),
+        &mode,
+        &format,
+        is_custom_speech,
+        &endpoint_id, 
+        Arc::new(Mutex::new(BingSpeechHandler {
+            c_handler: Arc::new(Mutex::new(handler)),
+        }))
+    );
 
-    Box::into_raw(handle)
+    match result {
+        Ok(_) => 0,
+        Err(err) => {
+            error!("{}", err);
+            1
+        },
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn bing_speech_websocket_disconnect(
+    c_websocket: *mut BingSpeechWebsocket
+) -> c_int {
+    let result = (*c_websocket).handle.disconnect();
+
+    match result {
+        Ok(_) => 0,
+        Err(err) => {
+            error!("{}", err);
+            1
+        },
+    }
 }
 
 #[no_mangle]
@@ -274,18 +320,19 @@ pub unsafe extern "C" fn bing_speech_websocket_audio(
     let mut i = 0;
 
     while i < audio_size {
-        let j = if audio_size - i < BUFFER_SIZE {
-            audio_size
-        } else {
-            i + BUFFER_SIZE
-        };
+        let j =
+            if audio_size - i < BUFFER_SIZE {
+                audio_size
+            } else {
+                i + BUFFER_SIZE
+            };
 
         // Send audio data to Bing Speech
         let result = (*handle)
             .handle
             .audio(&audio[i..j].to_vec());
         if let Err(err) = result {
-            error!(target: "bing_speech_websocket_audio()", "{}", err);
+            error!("{}", err);
             return 2;
         }
 
@@ -295,7 +342,92 @@ pub unsafe extern "C" fn bing_speech_websocket_audio(
     0
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn bing_speech_websocket_close(handle: *mut BingSpeechWebsocket) {
-    (*handle).handle.close();
+fn mode_from_c(c_mode: c_int, c_language: c_int) -> (Mode, c_int) {
+    match c_mode {
+        0 => match c_language {
+            0  => (Mode::Interactive(InteractiveDictationLanguage::ArabicEgypt), 0),
+            1  => (Mode::Interactive(InteractiveDictationLanguage::CatalanSpain), 0),
+            2  => (Mode::Interactive(InteractiveDictationLanguage::ChineseChina), 0),
+            3  => (Mode::Interactive(InteractiveDictationLanguage::ChineseHongKong), 0),
+            4  => (Mode::Interactive(InteractiveDictationLanguage::ChineseTaiwan), 0),
+            5  => (Mode::Interactive(InteractiveDictationLanguage::DanishDenmark), 0),
+            6  => (Mode::Interactive(InteractiveDictationLanguage::DutchNetherlands), 0),
+            7  => (Mode::Interactive(InteractiveDictationLanguage::EnglishAustralia), 0),
+            8  => (Mode::Interactive(InteractiveDictationLanguage::EnglishCanada), 0),
+            9  => (Mode::Interactive(InteractiveDictationLanguage::EnglishIndia), 0),
+            10 => (Mode::Interactive(InteractiveDictationLanguage::EnglishNewZealand), 0),
+            11 => (Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedKingdom), 0),
+            12 => (Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), 0),
+            13 => (Mode::Interactive(InteractiveDictationLanguage::FinnishFinland), 0),
+            14 => (Mode::Interactive(InteractiveDictationLanguage::FrenchCanada), 0),
+            15 => (Mode::Interactive(InteractiveDictationLanguage::FrenchFrance), 0),
+            16 => (Mode::Interactive(InteractiveDictationLanguage::GermanGermany), 0),
+            17 => (Mode::Interactive(InteractiveDictationLanguage::HindiIndia), 0),
+            18 => (Mode::Interactive(InteractiveDictationLanguage::ItalianItaly), 0),
+            19 => (Mode::Interactive(InteractiveDictationLanguage::JapaneseJapan), 0),
+            20 => (Mode::Interactive(InteractiveDictationLanguage::KoreanKorea), 0),
+            21 => (Mode::Interactive(InteractiveDictationLanguage::NorwegianNorway), 0),
+            22 => (Mode::Interactive(InteractiveDictationLanguage::PolishPoland), 0),
+            23 => (Mode::Interactive(InteractiveDictationLanguage::PortugueseBrazil), 0),
+            24 => (Mode::Interactive(InteractiveDictationLanguage::PortuguesePortugal), 0),
+            25 => (Mode::Interactive(InteractiveDictationLanguage::RussianRussia), 0),
+            26 => (Mode::Interactive(InteractiveDictationLanguage::SpanishMexico), 0),
+            27 => (Mode::Interactive(InteractiveDictationLanguage::SpanishSpain), 0),
+            28 => (Mode::Interactive(InteractiveDictationLanguage::SwedishSweden), 0),
+            _  => (Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), 1),
+        },
+        1 => match c_language {
+            0  => (Mode::Dictation(InteractiveDictationLanguage::ArabicEgypt), 0),
+            1  => (Mode::Dictation(InteractiveDictationLanguage::CatalanSpain), 0),
+            2  => (Mode::Dictation(InteractiveDictationLanguage::ChineseChina), 0),
+            3  => (Mode::Dictation(InteractiveDictationLanguage::ChineseHongKong), 0),
+            4  => (Mode::Dictation(InteractiveDictationLanguage::ChineseTaiwan), 0),
+            5  => (Mode::Dictation(InteractiveDictationLanguage::DanishDenmark), 0),
+            6  => (Mode::Dictation(InteractiveDictationLanguage::DutchNetherlands), 0),
+            7  => (Mode::Dictation(InteractiveDictationLanguage::EnglishAustralia), 0),
+            8  => (Mode::Dictation(InteractiveDictationLanguage::EnglishCanada), 0),
+            9  => (Mode::Dictation(InteractiveDictationLanguage::EnglishIndia), 0),
+            10 => (Mode::Dictation(InteractiveDictationLanguage::EnglishNewZealand), 0),
+            11 => (Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedKingdom), 0),
+            12 => (Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedStates), 0),
+            13 => (Mode::Dictation(InteractiveDictationLanguage::FinnishFinland), 0),
+            14 => (Mode::Dictation(InteractiveDictationLanguage::FrenchCanada), 0),
+            15 => (Mode::Dictation(InteractiveDictationLanguage::FrenchFrance), 0),
+            16 => (Mode::Dictation(InteractiveDictationLanguage::GermanGermany), 0),
+            17 => (Mode::Dictation(InteractiveDictationLanguage::HindiIndia), 0),
+            18 => (Mode::Dictation(InteractiveDictationLanguage::ItalianItaly), 0),
+            19 => (Mode::Dictation(InteractiveDictationLanguage::JapaneseJapan), 0),
+            20 => (Mode::Dictation(InteractiveDictationLanguage::KoreanKorea), 0),
+            21 => (Mode::Dictation(InteractiveDictationLanguage::NorwegianNorway), 0),
+            22 => (Mode::Dictation(InteractiveDictationLanguage::PolishPoland), 0),
+            23 => (Mode::Dictation(InteractiveDictationLanguage::PortugueseBrazil), 0),
+            24 => (Mode::Dictation(InteractiveDictationLanguage::PortuguesePortugal), 0),
+            25 => (Mode::Dictation(InteractiveDictationLanguage::RussianRussia), 0),
+            26 => (Mode::Dictation(InteractiveDictationLanguage::SpanishMexico), 0),
+            27 => (Mode::Dictation(InteractiveDictationLanguage::SpanishSpain), 0),
+            28 => (Mode::Dictation(InteractiveDictationLanguage::SwedishSweden), 0),
+            _  => (Mode::Dictation(InteractiveDictationLanguage::EnglishUnitedStates), 1),
+        },
+        2 => match c_language {
+            0  => (Mode::Conversation(ConversationLanguage::ArabicEgypt), 0),
+            1  => (Mode::Conversation(ConversationLanguage::ChineseChina), 0),
+            2  => (Mode::Conversation(ConversationLanguage::EnglishUnitedStates), 0),
+            3  => (Mode::Conversation(ConversationLanguage::FrenchFrance), 0),
+            4  => (Mode::Conversation(ConversationLanguage::GermanGermany), 0),
+            5  => (Mode::Conversation(ConversationLanguage::ItalianItaly), 0),
+            6  => (Mode::Conversation(ConversationLanguage::JapaneseJapan), 0),
+            7  => (Mode::Conversation(ConversationLanguage::PortugueseBrazil), 0),
+            8  => (Mode::Conversation(ConversationLanguage::RussianRussia), 0),
+            9  => (Mode::Conversation(ConversationLanguage::SpanishSpain), 0),
+            _  => (Mode::Conversation(ConversationLanguage::EnglishUnitedStates), 1),
+        },
+        _ => (Mode::Interactive(InteractiveDictationLanguage::EnglishUnitedStates), 0),
+    }
+}
+
+fn format_from_c(c_format: c_int) -> Format {
+    match c_format {
+        0 => Format::Simple,
+        _ => Format::Detailed,
+    }
 }
