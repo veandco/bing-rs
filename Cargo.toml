@@ -42,6 +42,7 @@ features = ["ssl"]
 [dev-dependencies]
 chan = "0.1"
 chan-signal = "0.3"
+cpal = "0.8"
 
 [lib]
 name = "bing_rs"

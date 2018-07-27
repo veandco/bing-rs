@@ -18,6 +18,7 @@ use serde_json;
 
 // internal
 pub mod c;
+pub mod voice;
 pub mod websocket;
 use self::websocket::*;
 use errors::*;
@@ -250,6 +251,50 @@ impl Speech {
                     let value: serde_json::Value = serde_json::from_slice(&chunks.to_vec())?;
                     let phrase = Phrase::from_json_value(&value)?;
                     Ok((header, status, Some(phrase)))
+                }
+            })
+        });
+        core_ref.run(work)?
+    }
+
+    /// Synthesize voice from a text
+    ///
+    /// See `examples/synthesize.rs` for an example.
+    pub fn synthesize(
+        &self,
+        text: &str,
+        font: &voice::Font,
+    ) -> Result<(HeaderMap, StatusCode, Option<Vec<u8>>)> {
+        let uri: Uri = "https://speech.platform.bing.com/synthesize"
+            .parse()
+            .unwrap();
+        let mut core_ref = self.core.try_borrow_mut()?;
+        let client = &self.client;
+
+        // Build Request
+        let data = format!("<speak version='1.0' xml:lang='en-US'><voice xml:lang='{}' xml:gender='{}' name='{}'>{}</voice></speak>", font.lang, font.gender, font.name, text);
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.token.lock().unwrap().clone()).as_str(),
+            )
+            .header("Content-Type", "application/ssml+xml")
+            .header("X-Microsoft-OutputFormat", "raw-16khz-16bit-mono-pcm")
+            .header("User-Agent", "bing-rs")
+            .body(Body::from(data))
+            .unwrap();
+
+        // Send Request
+        let work = client.request(request).and_then(|res| {
+            let header = res.headers().clone();
+            let status = res.status();
+            res.into_body().concat2().map(move |chunks| {
+                if chunks.is_empty() {
+                    Ok((header, status, None))
+                } else {
+                    Ok((header, status, Some(chunks.to_vec())))
                 }
             })
         });
