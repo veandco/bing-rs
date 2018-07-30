@@ -244,6 +244,76 @@ pub unsafe extern "C" fn bing_speech_auto_fetch_token(bing_speech: *mut BingSpee
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn bing_speech_recognize(
+    bing_speech: *mut BingSpeech,
+    c_audio: *mut c_void,
+    c_audio_len: c_int,
+    c_mode: c_int,
+    c_language: c_int,
+    c_format: c_int,
+    c_phrase: *mut BingSpeechPhrase,
+) -> c_int {
+    let audio: Vec<u8> = Vec::from_raw_parts(c_audio as *mut u8, c_audio_len as usize, c_audio_len as usize);
+    let (mode, ok) = mode_from_c(c_mode, c_language);
+    if ok != 0 {
+        return ok;
+    }
+
+    let format =
+        if c_format > 0 {
+            Format::Detailed
+        } else {
+            Format::Simple
+        };
+
+    let audio_1 = audio.clone();
+    mem::forget(audio);
+
+    if let Ok((_, _, Some(phrase))) = (*bing_speech).handle.recognize(audio_1, &mode, &format) {
+        match phrase {
+            Phrase::Simple(simple) => {
+                (*c_phrase).recognition_status = to_c_string(&simple.recognition_status);
+                (*c_phrase).display_text = to_c_string(&simple.display_text);
+                (*c_phrase).offset = simple.offset;
+                (*c_phrase).duration = simple.duration;
+                (*c_phrase).nbest = ptr::null_mut();
+                (*c_phrase).nbest_count = 0;
+            },
+            Phrase::Detailed(detailed) => {
+                let mut nbest = nbest_to_c(&detailed.nbest);
+                let nbest_count = detailed.nbest.len() as i32;
+                (*c_phrase).recognition_status = to_c_string(&detailed.recognition_status);
+                (*c_phrase).display_text = ptr::null_mut();
+                (*c_phrase).offset = detailed.offset;
+                (*c_phrase).duration = detailed.duration;
+                (*c_phrase).nbest = nbest.as_mut_ptr();
+                (*c_phrase).nbest_count = nbest_count;
+                mem::forget(nbest);
+            }
+            Phrase::Silence(silence) => {
+                (*c_phrase).recognition_status = to_c_string(&silence.recognition_status);
+                (*c_phrase).display_text = ptr::null_mut();
+                (*c_phrase).offset = silence.offset;
+                (*c_phrase).duration = silence.duration;
+                (*c_phrase).nbest = ptr::null_mut();
+                (*c_phrase).nbest_count = 0;
+            },
+            Phrase::Unknown => {
+                (*c_phrase).recognition_status = to_c_string("Unknown");
+                (*c_phrase).display_text = ptr::null_mut();
+                (*c_phrase).offset = 0.0;
+                (*c_phrase).duration = 0.0;
+                (*c_phrase).nbest = ptr::null_mut();
+                (*c_phrase).nbest_count = 0;
+            },
+        };
+        0
+    } else {
+        1
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn bing_speech_synthesize(bing_speech: *mut BingSpeech, c_text: *mut c_char, c_font: c_int, c_output: *mut *mut c_void, c_output_len: *mut c_int) {
     let text = CString::from_raw(c_text).into_string().unwrap();
     if let Ok((_, _, Some(mut data))) = (*bing_speech).handle.synthesize(&text, font_from_c(c_font)) {
