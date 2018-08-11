@@ -9,13 +9,11 @@ use speech::websocket::*;
 use speech::*;
 
 #[no_mangle]
-#[repr(C)]
 pub struct BingSpeech {
     handle: Speech,
 }
 
 #[no_mangle]
-#[repr(C)]
 pub struct BingSpeechWebsocket {
     handle: Websocket,
 }
@@ -23,12 +21,12 @@ pub struct BingSpeechWebsocket {
 #[no_mangle]
 #[repr(C)]
 pub struct BingSpeechWebsocketHandler {
-    on_turn_start: *mut c_void,
-    on_turn_end: *mut c_void,
-    on_speech_start: *mut c_void,
-    on_speech_end: *mut c_void,
-    on_speech_hypothesis: *mut c_void,
-    on_speech_phrase: *mut c_void,
+    on_turn_start: fn(),
+    on_turn_end: fn(),
+    on_speech_start: fn(),
+    on_speech_end: fn(),
+    on_speech_hypothesis: fn(BingSpeechHypothesis),
+    on_speech_phrase: fn(BingSpeechPhrase),
 }
 
 #[no_mangle]
@@ -88,50 +86,30 @@ fn to_c_string(s: &str) -> *mut c_char {
 impl Handler for BingSpeechHandler {
     fn on_turn_start(&mut self) {
         let handler = self.c_handler.lock().unwrap();
-        if handler.on_turn_start as usize == 0 {
-            return;
-        }
-
         let f: extern "C" fn() = unsafe { mem::transmute(handler.on_turn_start) };
         f();
     }
 
     fn on_turn_end(&mut self) {
         let handler = self.c_handler.lock().unwrap();
-        if handler.on_turn_end.is_null() {
-            return;
-        }
-
         let f: extern "C" fn() = unsafe { mem::transmute(handler.on_turn_end) };
         f();
     }
 
     fn on_speech_start(&mut self) {
         let handler = self.c_handler.lock().unwrap();
-        if handler.on_speech_start.is_null() {
-            return;
-        }
-
         let f: extern "C" fn() = unsafe { mem::transmute(handler.on_speech_start) };
         f();
     }
 
     fn on_speech_end(&mut self) {
         let handler = self.c_handler.lock().unwrap();
-        if handler.on_speech_end.is_null() {
-            return;
-        }
-
         let f: extern "C" fn() = unsafe { mem::transmute(handler.on_speech_end) };
         f();
     }
 
     fn on_speech_hypothesis(&mut self, hypothesis: Hypothesis) {
         let handler = self.c_handler.lock().unwrap();
-        if handler.on_speech_hypothesis.is_null() {
-            return;
-        }
-
         let f: extern "C" fn(BingSpeechHypothesis) =
             unsafe { mem::transmute(handler.on_speech_hypothesis) };
         f(BingSpeechHypothesis {
@@ -143,10 +121,6 @@ impl Handler for BingSpeechHandler {
 
     fn on_speech_phrase(&mut self, phrase: Phrase) {
         let handler = self.c_handler.lock().unwrap();
-        if handler.on_speech_phrase.is_null() {
-            return;
-        }
-
         let f: extern "C" fn(BingSpeechPhrase) =
             unsafe { mem::transmute(handler.on_speech_phrase) };
         let phrase = match phrase {
@@ -246,7 +220,7 @@ pub unsafe extern "C" fn bing_speech_auto_fetch_token(bing_speech: *mut BingSpee
 #[no_mangle]
 pub unsafe extern "C" fn bing_speech_recognize(
     bing_speech: *mut BingSpeech,
-    c_audio: *mut c_void,
+    c_audio: *const c_void,
     c_audio_len: c_int,
     c_mode: c_int,
     c_language: c_int,
@@ -404,12 +378,12 @@ pub unsafe extern "C" fn bing_speech_websocket_free(
 #[no_mangle]
 pub unsafe extern "C" fn bing_speech_websocket_audio(
     handle: *mut BingSpeechWebsocket,
-    audio: *mut u8,
+    audio: *const u8,
     audio_size: usize,
 ) -> i32 {
     const BUFFER_SIZE: usize = 4096;
 
-    let audio: Vec<u8> = Vec::from_raw_parts(audio, audio_size, audio_size);
+    let audio: Vec<u8> = Vec::from_raw_parts(audio as *mut u8, audio_size, audio_size);
     let mut i = 0;
 
     while i < audio_size {
@@ -793,3 +767,225 @@ fn font_from_c(c_font: c_int) -> &'static voice::Font {
         _ => voice::en_us::JESSA_RUS,
     }
 }
+
+#[no_mangle]
+pub static MODE_INTERACTIVE: i32 = 0;
+#[no_mangle]
+pub static MODE_DICTATION: i32 = 1;
+#[no_mangle]
+pub static MODE_CONVERSATION: i32 = 2;
+
+#[no_mangle]
+pub static LANGUAGE_ARABIC_EGYPT: i32 = 0;
+#[no_mangle]
+pub static LANGUAGE_CATALAN_SPAIN: i32 = 1;
+#[no_mangle]
+pub static LANGUAGE_CHINESE_CHINA: i32 = 2;
+#[no_mangle]
+pub static LANGUAGE_CHINESE_HONG_KONG: i32 = 3;
+#[no_mangle]
+pub static LANGUAGE_CHINESE_TAIWAN: i32 = 4;
+#[no_mangle]
+pub static LANGUAGE_DANISH_DENMARK: i32 = 5;
+#[no_mangle]
+pub static LANGUAGE_DUTCH_NETHERLANDS: i32 = 6;
+#[no_mangle]
+pub static LANGUAGE_ENGLISH_AUSTRALIA: i32 = 7;
+#[no_mangle]
+pub static LANGUAGE_ENGLISH_CANADA: i32 = 8;
+#[no_mangle]
+pub static LANGUAGE_ENGLISH_INDIA: i32 = 9;
+#[no_mangle]
+pub static LANGUAGE_ENGLISH_NEW_ZEALAND: i32 = 10;
+#[no_mangle]
+pub static LANGUAGE_ENGLISH_UNITED_KINGDOM: i32 = 11;
+#[no_mangle]
+pub static LANGUAGE_ENGLISH_UNITED_STATES: i32 = 12;
+#[no_mangle]
+pub static LANGUAGE_FINNISH_FINLAND: i32 = 13;
+#[no_mangle]
+pub static LANGUAGE_FRENCH_CANADA: i32 = 14;
+#[no_mangle]
+pub static LANGUAGE_FRENCH_FRANCE: i32 = 15;
+#[no_mangle]
+pub static LANGUAGE_GERMAN_GERMANY: i32 = 16;
+#[no_mangle]
+pub static LANGUAGE_HINDI_INDIA: i32 = 17;
+#[no_mangle]
+pub static LANGUAGE_ITALIAN_ITALY: i32 = 18;
+#[no_mangle]
+pub static LANGUAGE_JAPANESE_JAPAN: i32 = 19;
+#[no_mangle]
+pub static LANGUAGE_KOREAN_KOREA: i32 = 20;
+#[no_mangle]
+pub static LANGUAGE_NORWEGIAN_NORWAY: i32 = 21;
+#[no_mangle]
+pub static LANGUAGE_POLISH_POLAND: i32 = 22;
+#[no_mangle]
+pub static LANGUAGE_PORTUGUESE_BRAZIL: i32 = 23;
+#[no_mangle]
+pub static LANGUAGE_PORTUGUESE_PORTUGAL: i32 = 24;
+#[no_mangle]
+pub static LANGUAGE_RUSSIAN_RUSSIA: i32 = 25;
+#[no_mangle]
+pub static LANGUAGE_SPANISH_MEXICO: i32 = 26;
+#[no_mangle]
+pub static LANGUAGE_SPANISH_SPAIN: i32 = 27;
+#[no_mangle]
+pub static LANGUAGE_SWEDISH_SWEDEN: i32 = 28;
+
+#[no_mangle]
+pub static FORMAT_SIMPLE: i32 = 0;
+#[no_mangle]
+pub static FORMAT_DETAILED: i32 = 1;
+
+#[no_mangle]
+pub static VOICE_FONT_AR_EG_HODA           : i32 = 0;
+#[no_mangle]
+pub static VOICE_FONT_AR_SA_NAAYF          : i32 = 1;
+#[no_mangle]
+pub static VOICE_FONT_BG_BG_IVAN           : i32 = 2;
+#[no_mangle]
+pub static VOICE_FONT_CA_ES_HERENA_RUS     : i32 = 3;
+#[no_mangle]
+pub static VOICE_FONT_CA_CZ_JAKUB          : i32 = 4;
+#[no_mangle]
+pub static VOICE_FONT_DA_DK_HELLE_RUS      : i32 = 5;
+#[no_mangle]
+pub static VOICE_FONT_DE_AT_MICHAEL        : i32 = 6;
+#[no_mangle]
+pub static VOICE_FONT_DE_CH_KARSTEN        : i32 = 7;
+#[no_mangle]
+pub static VOICE_FONT_DE_DE_HEDDA          : i32 = 8;
+#[no_mangle]
+pub static VOICE_FONT_DE_DE_HEDDA_RUS      : i32 = 9;
+#[no_mangle]
+pub static VOICE_FONT_DE_DE_STEFAN_APOLLO  : i32 = 10;
+#[no_mangle]
+pub static VOICE_FONT_EL_GR_STEFANOS       : i32 = 11;
+#[no_mangle]
+pub static VOICE_FONT_EN_AU_CATHERINE      : i32 = 12;
+#[no_mangle]
+pub static VOICE_FONT_EN_AU_HAYLEY_RUS     : i32 = 13;
+#[no_mangle]
+pub static VOICE_FONT_EN_CA_LINDA          : i32 = 14;
+#[no_mangle]
+pub static VOICE_FONT_EN_CA_HEATHER_RUS    : i32 = 15;
+#[no_mangle]
+pub static VOICE_FONT_EN_GB_SUSAN_APOLLO   : i32 = 16;
+#[no_mangle]
+pub static VOICE_FONT_EN_GB_HAZEL_RUS      : i32 = 17;
+#[no_mangle]
+pub static VOICE_FONT_EN_GB_GEORGE_APOLLO  : i32 = 18;
+#[no_mangle]
+pub static VOICE_FONT_EN_IE_SEAN           : i32 = 19;
+#[no_mangle]
+pub static VOICE_FONT_EN_IN_HEERA_APOLLO   : i32 = 20;
+#[no_mangle]
+pub static VOICE_FONT_EN_IN_PRIYA_RUS      : i32 = 21;
+#[no_mangle]
+pub static VOICE_FONT_EN_IN_RAVI_APOLLO    : i32 = 22;
+#[no_mangle]
+pub static VOICE_FONT_EN_US_ZIRA_RUS       : i32 = 23;
+#[no_mangle]
+pub static VOICE_FONT_EN_US_JESSA_RUS      : i32 = 24;
+#[no_mangle]
+pub static VOICE_FONT_EN_US_BENJAMIN_RUS   : i32 = 25;
+#[no_mangle]
+pub static VOICE_FONT_ES_ES_LAURA_APOLLO   : i32 = 26;
+#[no_mangle]
+pub static VOICE_FONT_ES_ES_HELENA_RUS     : i32 = 27;
+#[no_mangle]
+pub static VOICE_FONT_ES_ES_PABLO_APOLLO   : i32 = 28;
+#[no_mangle]
+pub static VOICE_FONT_ES_MX_HILDA_RUS      : i32 = 29;
+#[no_mangle]
+pub static VOICE_FONT_ES_MX_RAUL_APOLLO    : i32 = 30;
+#[no_mangle]
+pub static VOICE_FONT_FI_FI_HEIDI_RUS      : i32 = 31;
+#[no_mangle]
+pub static VOICE_FONT_FR_CA_CAROLINE       : i32 = 32;
+#[no_mangle]
+pub static VOICE_FONT_FR_CA_HARMONIE_RUS   : i32 = 33;
+#[no_mangle]
+pub static VOICE_FONT_FR_CH_GUILLAUME      : i32 = 34;
+#[no_mangle]
+pub static VOICE_FONT_FR_FR_JULIE_APOLLO   : i32 = 35;
+#[no_mangle]
+pub static VOICE_FONT_FR_FR_HORTENSE_RUS   : i32 = 36;
+#[no_mangle]
+pub static VOICE_FONT_FR_FR_PAUL_APOLLO    : i32 = 37;
+#[no_mangle]
+pub static VOICE_FONT_HE_IL_ASAF           : i32 = 38;
+#[no_mangle]
+pub static VOICE_FONT_HI_IN_KALPANA_APOLLO : i32 = 39;
+#[no_mangle]
+pub static VOICE_FONT_HI_IN_KALPANA        : i32 = 40;
+#[no_mangle]
+pub static VOICE_FONT_HI_IN_HEMANT         : i32 = 41;
+#[no_mangle]
+pub static VOICE_FONT_HR_HR_MATEJ          : i32 = 42;
+#[no_mangle]
+pub static VOICE_FONT_HU_HU_SZABOLCS       : i32 = 43;
+#[no_mangle]
+pub static VOICE_FONT_ID_ID_ANDIKA         : i32 = 44;
+#[no_mangle]
+pub static VOICE_FONT_IT_IT_COSIMA_APOLLO  : i32 = 45;
+#[no_mangle]
+pub static VOICE_FONT_JA_JP_AYUMI_APOLLO   : i32 = 46;
+#[no_mangle]
+pub static VOICE_FONT_JA_JP_ICHIRO_APOLLO  : i32 = 47;
+#[no_mangle]
+pub static VOICE_FONT_JA_JP_HARUKA_RUS     : i32 = 48;
+#[no_mangle]
+pub static VOICE_FONT_JA_JP_LUCIA_RUS      : i32 = 49;
+#[no_mangle]
+pub static VOICE_FONT_JA_JP_EKATERINA_RUS  : i32 = 50;
+#[no_mangle]
+pub static VOICE_FONT_KO_KR_HEAMI_RUS      : i32 = 51;
+#[no_mangle]
+pub static VOICE_FONT_MS_MY_RIZWAN         : i32 = 52;
+#[no_mangle]
+pub static VOICE_FONT_NB_NO_HULDA_RUS      : i32 = 53;
+#[no_mangle]
+pub static VOICE_FONT_NL_NL_HANNA_RUS      : i32 = 54;
+#[no_mangle]
+pub static VOICE_FONT_PT_BR_HELOISA_RUS    : i32 = 55;
+#[no_mangle]
+pub static VOICE_FONT_PT_BR_DANIEL_APOLLO  : i32 = 56;
+#[no_mangle]
+pub static VOICE_FONT_RO_RO_ANDREI         : i32 = 57;
+#[no_mangle]
+pub static VOICE_FONT_RU_RU_IRINA_APOLLO   : i32 = 58;
+#[no_mangle]
+pub static VOICE_FONT_RU_RU_PAVEL_APOLLO   : i32 = 59;
+#[no_mangle]
+pub static VOICE_FONT_SK_SK_FILIP          : i32 = 60;
+#[no_mangle]
+pub static VOICE_FONT_SV_SE_HEDVIG_RUS     : i32 = 61;
+#[no_mangle]
+pub static VOICE_FONT_TA_IN_VALLUVAR       : i32 = 62;
+#[no_mangle]
+pub static VOICE_FONT_TH_TH_PATTARA        : i32 = 63;
+#[no_mangle]
+pub static VOICE_FONT_TR_TR_SEDA_RUS       : i32 = 64;
+#[no_mangle]
+pub static VOICE_FONT_VI_VN_AN             : i32 = 65;
+#[no_mangle]
+pub static VOICE_FONT_ZH_CN_HUIHUI_RUS     : i32 = 66;
+#[no_mangle]
+pub static VOICE_FONT_ZH_CN_YAOYAO_APOLLO  : i32 = 67;
+#[no_mangle]
+pub static VOICE_FONT_ZH_CN_KANGKANG_APOLLO: i32 = 68;
+#[no_mangle]
+pub static VOICE_FONT_ZH_HK_TRACY_APOLLO   : i32 = 69;
+#[no_mangle]
+pub static VOICE_FONT_ZH_HK_TRACY_RUS      : i32 = 70;
+#[no_mangle]
+pub static VOICE_FONT_ZH_HK_DANNY_APOLLO   : i32 = 71;
+#[no_mangle]
+pub static VOICE_FONT_ZH_TW_YATING_APOLLO  : i32 = 72;
+#[no_mangle]
+pub static VOICE_FONT_ZH_TW_HANHAN_RUS     : i32 = 73;
+#[no_mangle]
+pub static VOICE_FONT_ZH_TW_ZHIWEI_APOLLO  : i32 = 74;

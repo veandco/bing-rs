@@ -32,7 +32,6 @@ use std::thread;
 use std::time::Duration;
 
 #[no_mangle]
-#[repr(C)]
 pub struct Speech {
     pub token: Arc<Mutex<String>>,
     core: Rc<RefCell<Core>>,

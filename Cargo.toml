@@ -44,6 +44,9 @@ chan = "0.1"
 chan-signal = "0.3"
 cpal = "0.8"
 
+[build-dependencies]
+cbindgen = "0.6"
+
 [lib]
 name = "bing_rs"
 crate-type = ["lib", "dylib", "staticlib"]
