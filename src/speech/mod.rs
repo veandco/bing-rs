@@ -99,7 +99,7 @@ impl Speech {
         } else {
             "https://api.cognitive.microsoft.com/sts/v1.0/issueToken"
         }.parse()
-            .unwrap();
+        .unwrap();
 
         let request = Request::builder()
             .method(Method::POST)
@@ -148,7 +148,7 @@ impl Speech {
             } else {
                 "https://api.cognitive.microsoft.com/sts/v1.0/issueToken"
             }.parse()
-                .unwrap();
+            .unwrap();
 
             let request = Request::builder()
                 .method(Method::POST)
@@ -234,8 +234,7 @@ impl Speech {
             .header(
                 "Authorization",
                 format!("Bearer {}", self.token.lock().unwrap().clone()).as_str(),
-            )
-            .header("Content-Type", content_type)
+            ).header("Content-Type", content_type)
             .body(Body::from(audio))
             .unwrap();
 
@@ -278,8 +277,7 @@ impl Speech {
             .header(
                 "Authorization",
                 format!("Bearer {}", self.token.lock().unwrap().clone()).as_str(),
-            )
-            .header("Content-Type", "application/ssml+xml")
+            ).header("Content-Type", "application/ssml+xml")
             .header("X-Microsoft-OutputFormat", "raw-16khz-16bit-mono-pcm")
             .header("User-Agent", "bing-rs")
             .body(Body::from(data))
